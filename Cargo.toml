@@ -8,12 +8,26 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
 license = "AGPL-3.0-or-later"
 authors = []
 repository = "https://github.com/nsprd/fwknox"
 homepage = "https://github.com/nsprd/fwknox"
 readme = "README.md"
+
+[workspace.dependencies]
+ring         = "0.17"
+rmp-serde    = "1"
+serde        = { version = "1", features = ["derive"] }
+thiserror    = "2"
+base64       = "0.22"
+zeroize      = { version = "1", features = ["derive"] }
+toml         = "0.8"
+ipnet        = { version = "2", features = ["serde"] }
+humantime-serde = "1"
+hex          = "0.4"
+tempfile     = "3"
+fwknox-proto  = { path = "crates/fwknox-proto" }
+fwknox-config = { path = "crates/fwknox-config" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -32,7 +46,3 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
-
-[profile.dev]
-opt-level = 0
-debug = true
