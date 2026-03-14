@@ -13,7 +13,9 @@
 //! ```
 
 mod error;
+mod payload;
 mod types;
 
 pub use error::ProtoError;
+pub use payload::SpaPayload;
 pub use types::{PortProto, Protocol, SpaMessage};
