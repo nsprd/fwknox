@@ -13,5 +13,7 @@
 //! ```
 
 mod error;
+mod types;
 
 pub use error::ProtoError;
+pub use types::{PortProto, Protocol, SpaMessage};
