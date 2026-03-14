@@ -11,3 +11,7 @@
 //! ```text
 //! [Header (4 bytes)] [GCM Nonce (12 bytes)] [Encrypted Payload + GCM Tag] [HMAC (32 bytes)]
 //! ```
+
+mod error;
+
+pub use error::ProtoError;
