@@ -20,7 +20,7 @@ rmp-serde    = "1"
 serde        = { version = "1", features = ["derive"] }
 thiserror    = "2"
 base64       = "0.22"
-zeroize      = { version = "1", features = ["derive"] }
+zeroize      = { version = "1", features = ["zeroize_derive"] }
 toml         = "0.8"
 ipnet        = { version = "2", features = ["serde"] }
 humantime-serde = "1"
