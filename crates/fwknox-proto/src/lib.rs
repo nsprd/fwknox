@@ -13,9 +13,11 @@
 //! ```
 
 mod error;
+mod header;
 mod payload;
 mod types;
 
 pub use error::ProtoError;
+pub use header::{Flags, Header, HEADER_LEN, PROTO_VERSION};
 pub use payload::SpaPayload;
 pub use types::{PortProto, Protocol, SpaMessage};
