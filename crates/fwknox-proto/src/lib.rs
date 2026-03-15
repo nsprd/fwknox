@@ -14,10 +14,12 @@
 
 mod error;
 mod header;
+mod kdf;
 mod payload;
 mod types;
 
 pub use error::ProtoError;
 pub use header::{Flags, Header, HEADER_LEN, PROTO_VERSION};
+pub use kdf::{DerivedKeys, SubKey, SUBKEY_LEN};
 pub use payload::SpaPayload;
 pub use types::{PortProto, Protocol, SpaMessage};
