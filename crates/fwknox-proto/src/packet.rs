@@ -210,12 +210,34 @@ mod tests {
         let new_tag = hmac::sign(keys.hmac.as_bytes(), &wire[..signed_len]);
         wire[signed_len..].copy_from_slice(&new_tag);
         let err = parse_packet(&wire, &[0x42; 32]).unwrap_err();
-        // Either the AAD check (AeadFailed) or the flag/payload cross-check
-        // (InvalidField) is acceptable — both prove tampering is detected.
-        assert!(matches!(
-            err,
-            ProtoError::AeadFailed | ProtoError::InvalidField(_)
-        ));
+        // The deterministic outcome: flipping the flags byte changes the AAD
+        // that was bound into AES-GCM, so decryption fails *before* the
+        // flag/payload cross-check ever runs. Asserting AeadFailed exactly
+        // means a future regression that broke AAD binding cannot quietly
+        // pass via the (also-correct) InvalidField path.
+        assert!(matches!(err, ProtoError::AeadFailed));
+    }
+
+    #[test]
+    fn parse_rejects_tampered_ciphertext_at_hmac() {
+        // Build a valid packet, then flip a byte deep inside the ciphertext
+        // region (after the header + nonce). Do NOT re-sign the HMAC. The
+        // HMAC is over header || nonce || ciphertext_with_tag, so any change
+        // to the ciphertext bytes must invalidate the HMAC tag. This proves
+        // encrypt-then-MAC ordering: if the HMAC were mistakenly computed
+        // over the *plaintext* instead, this tampering would slip past HMAC
+        // and only be caught at AEAD, returning AeadFailed instead of
+        // HmacFailed.
+        let payload = sample_payload();
+        let mut wire = build_packet(&payload, &[0x42; 32]).unwrap();
+        // Flip a bit inside the ciphertext region (one byte past the nonce).
+        let ct_byte_index = HEADER_LEN + NONCE_LEN;
+        wire[ct_byte_index] ^= 0x80;
+        let err = parse_packet(&wire, &[0x42; 32]).unwrap_err();
+        assert!(
+            matches!(err, ProtoError::HmacFailed),
+            "expected HmacFailed (proves HMAC covers ciphertext), got {err:?}"
+        );
     }
 
     #[test]
