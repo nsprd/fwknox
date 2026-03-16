@@ -9,3 +9,7 @@
 //! This crate is the schema for `/etc/fwknox/fwknoxd.toml` (server) and
 //! `~/.config/fwknox/fwknox.toml` (client). Subsequent tasks add the
 //! individual modules.
+
+mod error;
+
+pub use error::ConfigError;
