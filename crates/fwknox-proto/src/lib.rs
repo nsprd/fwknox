@@ -20,6 +20,7 @@ mod kdf;
 mod packet;
 mod payload;
 mod types;
+mod validate;
 
 pub use aead::{
     generate_nonce, open as aead_open, seal as aead_seal, KEY_LEN as AEAD_KEY_LEN, NONCE_LEN,
@@ -32,3 +33,6 @@ pub use kdf::{DerivedKeys, SubKey, SUBKEY_LEN};
 pub use packet::{build_packet, parse_packet, MAX_PACKET_LEN, MIN_PACKET_LEN};
 pub use payload::SpaPayload;
 pub use types::{PortProto, Protocol, SpaMessage};
+pub use validate::{
+    validate_against_clock, Validated, DEFAULT_MAX_AGE_SECS, DEFAULT_MAX_SKEW_SECS,
+};
