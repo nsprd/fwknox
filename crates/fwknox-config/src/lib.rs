@@ -11,5 +11,7 @@
 //! individual modules.
 
 mod error;
+mod shared;
 
 pub use error::ConfigError;
+pub use shared::{parse_port_proto, Base64Key, PortProtoList, SourceSpec};
