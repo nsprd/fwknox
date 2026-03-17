@@ -207,14 +207,16 @@ fn default_run_user() -> String {
 fn default_run_group() -> String {
     "fwknox".into()
 }
+#[allow(clippy::duration_suboptimal_units)]
 fn default_max_age() -> Duration {
-    Duration::from_mins(2)
+    Duration::from_secs(120)
 }
 fn default_fw_timeout() -> Duration {
     Duration::from_secs(30)
 }
+#[allow(clippy::duration_suboptimal_units)]
 fn default_max_fw_timeout() -> Duration {
-    Duration::from_mins(5)
+    Duration::from_secs(300)
 }
 fn default_log_level() -> String {
     "info".into()
@@ -222,8 +224,9 @@ fn default_log_level() -> String {
 fn default_replay_path() -> PathBuf {
     PathBuf::from("/var/lib/fwknox/replay.cache")
 }
+#[allow(clippy::duration_suboptimal_units)]
 fn default_replay_max_age() -> Duration {
-    Duration::from_hours(24)
+    Duration::from_secs(86_400)
 }
 fn yes() -> bool {
     true

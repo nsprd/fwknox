@@ -21,6 +21,9 @@ use crate::{
     types::SpaMessage,
 };
 
+/// Required master key length in bytes. Keys of any other length are rejected.
+pub const MASTER_KEY_LEN: usize = 32;
+
 /// Maximum SPA packet length (UDP-friendly).
 pub const MAX_PACKET_LEN: usize = 1500;
 
@@ -32,6 +35,9 @@ pub const MIN_PACKET_LEN: usize = HEADER_LEN + NONCE_LEN + TAG_LEN + HMAC_LEN;
 /// The flag bits are computed automatically from the payload's `message`
 /// variant and the presence of `client_timeout`.
 pub fn build_packet(payload: &SpaPayload, master_key: &[u8]) -> Result<Vec<u8>, ProtoError> {
+    if master_key.len() != MASTER_KEY_LEN {
+        return Err(ProtoError::InvalidField("master_key must be 32 bytes"));
+    }
     let plaintext = payload.encode()?;
     let nonce = aead::generate_nonce()?;
     let flags = derive_flags(&payload.message, payload.client_timeout.is_some());
@@ -70,6 +76,9 @@ pub fn build_packet(payload: &SpaPayload, master_key: &[u8]) -> Result<Vec<u8>, 
 /// Performs HMAC verification *before* decryption to short-circuit invalid
 /// packets cheaply.
 pub fn parse_packet(wire: &[u8], master_key: &[u8]) -> Result<SpaPayload, ProtoError> {
+    if master_key.len() != MASTER_KEY_LEN {
+        return Err(ProtoError::InvalidField("master_key must be 32 bytes"));
+    }
     if wire.len() < MIN_PACKET_LEN {
         return Err(ProtoError::PacketTooShort {
             got: wire.len(),
@@ -255,11 +264,45 @@ mod tests {
     }
 
     #[test]
+    fn build_rejects_short_master_key() {
+        let payload = sample_payload();
+        let err = build_packet(&payload, &[0u8; 16]).unwrap_err();
+        assert!(matches!(err, ProtoError::InvalidField(_)));
+    }
+
+    #[test]
+    fn parse_rejects_short_master_key() {
+        let payload = sample_payload();
+        let wire = build_packet(&payload, &[0x42; 32]).unwrap();
+        let err = parse_packet(&wire, &[0u8; 16]).unwrap_err();
+        assert!(matches!(err, ProtoError::InvalidField(_)));
+    }
+
+    #[test]
     fn nat_payload_roundtrip() {
         let key = [0x99u8; 32];
         let p = nat_payload();
         let wire = build_packet(&p, &key).unwrap();
         let back = parse_packet(&wire, &key).unwrap();
         assert_eq!(p, back);
+    }
+
+    #[test]
+    fn parse_rejects_asymmetric_flag_in_symmetric_phase1() {
+        // Phase 1 only supports symmetric mode. A packet with the ASYMMETRIC
+        // flag set should be rejected. We construct a normal packet, flip the
+        // ASYMMETRIC bit in the header, re-sign the HMAC so we get past the
+        // HMAC gate, and assert that AEAD's AAD check (or the flag/payload
+        // cross-check) catches it.
+        let payload = sample_payload();
+        let mut wire = build_packet(&payload, &[0x42; 32]).unwrap();
+        wire[1] |= Flags::ASYMMETRIC;
+        let keys = DerivedKeys::derive(&[0x42; 32]).unwrap();
+        let signed_len = wire.len() - HMAC_LEN;
+        let new_tag = hmac::sign(keys.hmac.as_bytes(), &wire[..signed_len]);
+        wire[signed_len..].copy_from_slice(&new_tag);
+        let err = parse_packet(&wire, &[0x42; 32]).unwrap_err();
+        // Just like the existing tampering test: AEAD catches it via AAD.
+        assert!(matches!(err, ProtoError::AeadFailed));
     }
 }

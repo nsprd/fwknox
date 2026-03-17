@@ -16,12 +16,12 @@ use fwknox_proto::{
     SpaPayload, DEFAULT_MAX_AGE_SECS, DEFAULT_MAX_SKEW_SECS,
 };
 
+#[allow(clippy::cast_possible_wrap)]
 fn build_test_payload() -> SpaPayload {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs()
-        .cast_signed();
+        .as_secs() as i64;
     SpaPayload {
         nonce: [0xCD; 16],
         timestamp: now,
@@ -81,11 +81,11 @@ fn end_to_end_packet_roundtrip_with_loaded_config() {
     assert!(stanza.source.iter().any(|s| s.matches(src)));
 
     // Timestamp is fresh.
+    #[allow(clippy::cast_possible_wrap)]
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
-        .as_secs()
-        .cast_signed();
+        .as_secs() as i64;
     validate_against_clock(&decoded, now, DEFAULT_MAX_AGE_SECS, DEFAULT_MAX_SKEW_SECS).unwrap();
 }
 

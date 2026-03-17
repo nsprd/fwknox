@@ -46,7 +46,8 @@ impl Flags {
     /// `from_raw`.
     #[inline]
     #[must_use]
-    pub const fn from_raw_unchecked(byte: u8) -> Self {
+    #[allow(dead_code)]
+    pub(crate) const fn from_raw_unchecked(byte: u8) -> Self {
         Self(byte)
     }
 
