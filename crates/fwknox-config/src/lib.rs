@@ -10,10 +10,12 @@
 //! `~/.config/fwknox/fwknox.toml` (client). Subsequent tasks add the
 //! individual modules.
 
+mod client;
 mod daemon;
 mod error;
 mod shared;
 
+pub use client::{ClientConfig, ClientTransport, DefaultsSection, ServerEntry};
 pub use daemon::{
     AccessStanza, CaptureMode, DaemonConfig, DaemonSection, FirewallBackend, ReplaySection,
 };
