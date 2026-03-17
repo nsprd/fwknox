@@ -7,12 +7,12 @@
 //! types used by the binaries.
 //!
 //! This crate is the schema for `/etc/fwknox/fwknoxd.toml` (server) and
-//! `~/.config/fwknox/fwknox.toml` (client). Subsequent tasks add the
-//! individual modules.
+//! `~/.config/fwknox/fwknox.toml` (client).
 
 mod client;
 mod daemon;
 mod error;
+mod load;
 mod shared;
 
 pub use client::{ClientConfig, ClientTransport, DefaultsSection, ServerEntry};
@@ -20,4 +20,5 @@ pub use daemon::{
     AccessStanza, CaptureMode, DaemonConfig, DaemonSection, FirewallBackend, ReplaySection,
 };
 pub use error::ConfigError;
+pub use load::{load_client_config, load_daemon_config};
 pub use shared::{parse_port_proto, Base64Key, PortProtoList, SourceSpec};
