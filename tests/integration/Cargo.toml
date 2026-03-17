@@ -1,0 +1,22 @@
+[package]
+name = "fwknox-integration-tests"
+description = "Workspace-level integration tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+base64.workspace = true
+fwknox-config.workspace = true
+fwknox-proto.workspace = true
+tempfile.workspace = true

@@ -91,6 +91,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fwknox-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "fwknox-config",
+ "fwknox-proto",
+ "tempfile",
+]
+
+[[package]]
 name = "fwknox-proto"
 version = "0.1.0"
 dependencies = [

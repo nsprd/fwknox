@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/fwknox-proto",
     "crates/fwknox-config",
+    "tests/integration",
 ]
 
 [workspace.package]
