@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "crates/fwknox-proto",
     "crates/fwknox-config",
+    "crates/fwknox-replay",
+    "crates/fwknox-firewall",
+    "crates/fwknox-capture",
     "tests/integration",
 ]
 
@@ -29,6 +32,10 @@ hex          = "0.4"
 tempfile     = "3"
 fwknox-proto  = { path = "crates/fwknox-proto" }
 fwknox-config = { path = "crates/fwknox-config" }
+fwknox-replay   = { path = "crates/fwknox-replay" }
+fwknox-firewall = { path = "crates/fwknox-firewall" }
+fwknox-capture  = { path = "crates/fwknox-capture" }
+tracing         = "0.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
