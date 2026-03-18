@@ -3,12 +3,9 @@
 //! # fwknox-replay
 //!
 //! In-memory + file-backed replay-detection cache for the fwknox daemon.
-//!
-//! Each entry is keyed by the SPA payload's 16-byte nonce. Insert returns
-//! `true` for fresh nonces and `false` for replays. The cache periodically
-//! prunes entries older than a configured maximum age and persists itself
-//! to disk via atomic file replacement (write to temp + rename).
 
+mod cache;
 mod error;
 
+pub use cache::{Nonce, ReplayCache};
 pub use error::ReplayError;
