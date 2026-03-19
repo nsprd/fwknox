@@ -7,14 +7,18 @@
 //! This crate defines the [`FirewallBackend`] trait and ships two
 //! implementations:
 //!
-//! - [`MockBackend`]: an in-memory implementation used by tests.
-//! - [`NftablesBackend`]: a Linux nftables backend that uses the
+//! - `MockBackend`: an in-memory implementation used by tests.
+//! - `NftablesBackend`: a Linux nftables backend that uses the
 //!   [`nftables`](https://docs.rs/nftables) Rust crate to construct
 //!   typed rulesets and apply them via the kernel's netlink interface
 //!   (the crate invokes `nft` internally as its transport but the API
 //!   is fully strongly typed — no string interpolation, no command
 //!   injection surface).
 
+mod backend;
 mod error;
+mod rule;
 
+pub use backend::FirewallBackend;
 pub use error::FirewallError;
+pub use rule::{AccessRule, RuleHandle};
