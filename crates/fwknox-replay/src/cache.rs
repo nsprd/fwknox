@@ -100,7 +100,7 @@ mod tests {
         cache.check_and_insert([1; 16]);
         cache.check_and_insert([2; 16]);
         // Anything less than an hour old should survive.
-        let pruned = cache.prune_older_than(Duration::from_hours(1));
+        let pruned = cache.prune_older_than(Duration::from_secs(3600));
         assert_eq!(pruned, 0);
         assert_eq!(cache.len(), 2);
     }
@@ -118,7 +118,7 @@ mod tests {
                 *ts = 0;
             }
         }
-        let pruned = cache.prune_older_than(Duration::from_mins(1));
+        let pruned = cache.prune_older_than(Duration::from_secs(60));
         assert_eq!(pruned, 1);
         assert!(cache.is_empty());
     }
