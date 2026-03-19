@@ -36,6 +36,7 @@ fwknox-replay   = { path = "crates/fwknox-replay" }
 fwknox-firewall = { path = "crates/fwknox-firewall" }
 fwknox-capture  = { path = "crates/fwknox-capture" }
 tracing         = "0.1"
+nftables        = "0.6"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

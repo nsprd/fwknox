@@ -11,3 +11,7 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
+fwknox-proto.workspace = true
+nftables.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
