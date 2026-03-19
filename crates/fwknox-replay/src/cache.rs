@@ -63,6 +63,20 @@ impl ReplayCache {
         guard.retain(|_, ts| *ts >= cutoff);
         before - guard.len()
     }
+
+    /// Load a cache from a file. Missing files produce an empty cache.
+    pub fn load_from_file(path: &std::path::Path) -> Result<Self, crate::error::ReplayError> {
+        let entries = crate::persist::read_cache_file(path)?;
+        Ok(Self {
+            inner: Mutex::new(entries),
+        })
+    }
+
+    /// Atomically save the cache to a file.
+    pub fn save_to_file(&self, path: &std::path::Path) -> Result<(), crate::error::ReplayError> {
+        let guard = self.inner.lock().expect("replay cache poisoned");
+        crate::persist::write_cache_file(path, &guard)
+    }
 }
 
 #[cfg(test)]
@@ -129,5 +143,21 @@ mod tests {
         assert!(cache.is_empty());
         cache.check_and_insert([0; 16]);
         assert!(!cache.is_empty());
+    }
+
+    #[test]
+    fn cache_persists_across_load_and_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.cache");
+        {
+            let cache = ReplayCache::new();
+            cache.check_and_insert([0x11; 16]);
+            cache.check_and_insert([0x22; 16]);
+            cache.save_to_file(&path).unwrap();
+        }
+        let loaded = ReplayCache::load_from_file(&path).unwrap();
+        assert_eq!(loaded.len(), 2);
+        // Re-inserting the same nonces is detected as a replay.
+        assert!(!loaded.check_and_insert([0x11; 16]));
     }
 }

@@ -6,6 +6,7 @@
 
 mod cache;
 mod error;
+mod persist;
 
 pub use cache::{Nonce, ReplayCache};
 pub use error::ReplayError;
