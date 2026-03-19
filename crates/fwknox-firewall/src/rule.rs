@@ -2,8 +2,7 @@
 
 //! Rule and rule-handle types used by the [`FirewallBackend`](crate::FirewallBackend) trait.
 
-use std::net::IpAddr;
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 
 use fwknox_proto::PortProto;
 

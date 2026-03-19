@@ -2,8 +2,10 @@
 
 //! The [`FirewallBackend`] trait.
 
-use crate::error::FirewallError;
-use crate::rule::{AccessRule, RuleHandle};
+use crate::{
+    error::FirewallError,
+    rule::{AccessRule, RuleHandle},
+};
 
 /// Pluggable firewall backend used by the daemon. Implementations must be
 /// `Send + Sync` because the daemon may invoke them from a worker pool.
