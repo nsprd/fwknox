@@ -106,6 +106,7 @@ version = "0.1.0"
 dependencies = [
  "fwknox-proto",
  "nftables",
+ "serde_json",
  "thiserror",
  "tracing",
 ]
