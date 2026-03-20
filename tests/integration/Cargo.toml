@@ -17,6 +17,9 @@ workspace = true
 
 [dev-dependencies]
 base64.workspace = true
+fwknox-capture.workspace = true
 fwknox-config.workspace = true
+fwknox-firewall.workspace = true
 fwknox-proto.workspace = true
+fwknox-replay.workspace = true
 tempfile.workspace = true

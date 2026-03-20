@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+//! `UdpCapture` — a `CaptureBackend` backed by a `UdpSocket`.
+
+use std::net::{SocketAddr, UdpSocket};
+
+use crate::{backend::CaptureBackend, error::CaptureError, packet::CapturedPacket};
+
+/// Maximum UDP datagram size we will receive. Larger datagrams are
+/// truncated by the kernel and rejected at the protocol layer.
+pub const MAX_DATAGRAM_LEN: usize = 1500;
+
+/// A capture backend that listens on a UDP socket.
+#[derive(Debug)]
+pub struct UdpCapture {
+    socket: UdpSocket,
+}
+
+impl UdpCapture {
+    /// Bind a new UDP capture socket to the given address.
+    pub fn bind(addr: SocketAddr) -> Result<Self, CaptureError> {
+        let socket = UdpSocket::bind(addr).map_err(CaptureError::Bind)?;
+        Ok(Self { socket })
+    }
+
+    /// Borrow the underlying socket's local address (used by tests to
+    /// inspect the bound port).
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.socket.local_addr()
+    }
+}
+
+impl CaptureBackend for UdpCapture {
+    fn recv(&self) -> Result<CapturedPacket, CaptureError> {
+        let mut buf = [0u8; MAX_DATAGRAM_LEN];
+        let (len, peer) = self
+            .socket
+            .recv_from(&mut buf)
+            .map_err(CaptureError::Recv)?;
+        Ok(CapturedPacket {
+            source_ip: peer.ip(),
+            data: buf[..len].to_vec(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+
+    use super::*;
+
+    #[test]
+    fn bind_to_ephemeral_port_succeeds() {
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
+        let cap = UdpCapture::bind(addr).unwrap();
+        let bound = cap.local_addr().unwrap();
+        assert_eq!(bound.ip(), Ipv4Addr::LOCALHOST);
+        assert_ne!(bound.port(), 0);
+    }
+
+    #[test]
+    fn bind_to_already_bound_port_fails() {
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0));
+        let first = UdpCapture::bind(addr).unwrap();
+        let bound = first.local_addr().unwrap();
+        let second = UdpCapture::bind(bound);
+        assert!(second.is_err());
+    }
+
+    #[test]
+    fn recv_returns_sent_payload() {
+        let server =
+            UdpCapture::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let server_addr = server.local_addr().unwrap();
+        let client =
+            UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let payload = b"hello fwknox";
+        client.send_to(payload, server_addr).unwrap();
+        let pkt = server.recv().unwrap();
+        assert_eq!(pkt.data, payload);
+        assert_eq!(pkt.source_ip, std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn recv_truncates_oversize_datagrams() {
+        let server =
+            UdpCapture::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let server_addr = server.local_addr().unwrap();
+        let client =
+            UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let big_payload = vec![0xAA; 2000];
+        client.send_to(&big_payload, server_addr).unwrap();
+        let pkt = server.recv().unwrap();
+        // Kernel truncates to MAX_DATAGRAM_LEN.
+        assert_eq!(pkt.data.len(), MAX_DATAGRAM_LEN);
+    }
+}

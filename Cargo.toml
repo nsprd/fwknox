@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "crates/fwknox-proto",
     "crates/fwknox-config",
+    "crates/fwknox-replay",
+    "crates/fwknox-firewall",
+    "crates/fwknox-capture",
     "tests/integration",
 ]
 
@@ -19,6 +22,7 @@ readme = "README.md"
 ring         = "0.17"
 rmp-serde    = "1"
 serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
 thiserror    = "2"
 base64       = "0.22"
 zeroize      = { version = "1", features = ["zeroize_derive"] }
@@ -29,6 +33,11 @@ hex          = "0.4"
 tempfile     = "3"
 fwknox-proto  = { path = "crates/fwknox-proto" }
 fwknox-config = { path = "crates/fwknox-config" }
+fwknox-replay   = { path = "crates/fwknox-replay" }
+fwknox-firewall = { path = "crates/fwknox-firewall" }
+fwknox-capture  = { path = "crates/fwknox-capture" }
+tracing         = "0.1"
+nftables        = "0.6"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -41,6 +50,7 @@ pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+duration_suboptimal_units = "allow"
 
 [profile.release]
 lto = "thin"
