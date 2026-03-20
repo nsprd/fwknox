@@ -21,7 +21,7 @@ pub struct AccessRule {
 
 /// Opaque identifier for a rule that has been installed in a backend.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RuleHandle(pub String);
+pub struct RuleHandle(String);
 
 impl RuleHandle {
     /// Construct a rule handle from a backend-specific string.
