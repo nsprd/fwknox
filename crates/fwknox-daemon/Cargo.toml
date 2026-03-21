@@ -12,3 +12,11 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
+fwknox-capture.workspace = true
+fwknox-config.workspace = true
+fwknox-firewall.workspace = true
+fwknox-proto.workspace = true
+fwknox-replay.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
