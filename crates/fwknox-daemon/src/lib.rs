@@ -10,6 +10,8 @@
 
 mod error;
 mod matcher;
+mod pipeline;
 
 pub use error::DaemonError;
 pub use matcher::{match_packet, MatchResult};
+pub use pipeline::{process_packet, ProcessResult};
