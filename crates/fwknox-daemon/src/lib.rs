@@ -9,5 +9,7 @@
 //! `run`.
 
 mod error;
+mod matcher;
 
 pub use error::DaemonError;
+pub use matcher::{match_packet, MatchResult};

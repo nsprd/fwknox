@@ -120,11 +120,13 @@ dependencies = [
 name = "fwknox-daemon"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "fwknox-capture",
  "fwknox-config",
  "fwknox-firewall",
  "fwknox-proto",
  "fwknox-replay",
+ "tempfile",
  "thiserror",
  "tracing",
  "tracing-subscriber",
