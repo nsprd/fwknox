@@ -8,12 +8,14 @@
 //! config loading + real-backend instantiation + a single call into
 //! `run`.
 
+mod cli;
 mod error;
 mod matcher;
 mod pipeline;
 mod run;
 mod shutdown;
 
+pub use cli::Cli;
 pub use error::DaemonError;
 pub use matcher::{match_packet, MatchResult};
 pub use pipeline::{process_packet, ProcessResult};
