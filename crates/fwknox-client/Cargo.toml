@@ -12,3 +12,11 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
+base64.workspace = true
+clap.workspace = true
+fwknox-config.workspace = true
+fwknox-proto.workspace = true
+ring.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

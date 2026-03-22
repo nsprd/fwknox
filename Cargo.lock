@@ -197,6 +197,16 @@ dependencies = [
 [[package]]
 name = "fwknox-client"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "clap",
+ "fwknox-config",
+ "fwknox-proto",
+ "ring",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "fwknox-config"
