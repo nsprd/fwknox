@@ -11,9 +11,11 @@
 mod error;
 mod matcher;
 mod pipeline;
+mod run;
 mod shutdown;
 
 pub use error::DaemonError;
 pub use matcher::{match_packet, MatchResult};
 pub use pipeline::{process_packet, ProcessResult};
+pub use run::{run, LOOP_TICK, PRUNE_EVERY_TICKS};
 pub use shutdown::ShutdownSignal;
