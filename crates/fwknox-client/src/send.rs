@@ -8,11 +8,7 @@ use crate::error::ClientError;
 
 /// Send a SPA packet to `destination:port` over UDP. Binds an ephemeral
 /// local port and sends a single datagram.
-pub fn send_udp_packet(
-    packet: &[u8],
-    destination: &str,
-    port: u16,
-) -> Result<(), ClientError> {
+pub fn send_udp_packet(packet: &[u8], destination: &str, port: u16) -> Result<(), ClientError> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     let target = resolve(destination, port)?;
     socket.send_to(packet, target)?;
@@ -20,15 +16,11 @@ pub fn send_udp_packet(
 }
 
 fn resolve(host: &str, port: u16) -> Result<SocketAddr, ClientError> {
-    let mut addrs = (host, port)
-        .to_socket_addrs()
-        .map_err(ClientError::Io)?;
-    addrs
-        .next()
-        .ok_or(ClientError::InvalidArgument {
-            field: "destination",
-            reason: "host did not resolve to any address".into(),
-        })
+    let mut addrs = (host, port).to_socket_addrs().map_err(ClientError::Io)?;
+    addrs.next().ok_or(ClientError::InvalidArgument {
+        field: "destination",
+        reason: "host did not resolve to any address".into(),
+    })
 }
 
 #[cfg(test)]

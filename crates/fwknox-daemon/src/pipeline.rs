@@ -75,9 +75,15 @@ pub fn process_packet(
 ) -> Result<ProcessResult, fwknox_firewall::FirewallError> {
     // Step 1: stanza matching.
     let (stanza_name, payload) = match match_packet(&captured.data, &config.access) {
-        MatchResult::Matched { stanza_name, payload } => (stanza_name, payload),
+        MatchResult::Matched {
+            stanza_name,
+            payload,
+        } => (stanza_name, payload),
         MatchResult::NoMatch => return Ok(ProcessResult::NoMatch),
-        MatchResult::Rejected { stanza_name, reason } => {
+        MatchResult::Rejected {
+            stanza_name,
+            reason,
+        } => {
             return Ok(ProcessResult::Rejected {
                 stanza_name,
                 reason: reason.to_string(),
@@ -172,14 +178,14 @@ fn clamp_timeout(requested: Duration, max: Duration) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine;
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
     use fwknox_config::load_daemon_config;
     use fwknox_firewall::MockBackend;
     use fwknox_proto::{build_packet, PortProto, Protocol, SpaMessage, SpaPayload};
+
+    use super::*;
 
     #[allow(clippy::cast_possible_wrap)]
     fn ts_now() -> i64 {

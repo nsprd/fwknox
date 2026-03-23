@@ -3,22 +3,21 @@
 //! End-to-end test that runs the daemon library against a client-built
 //! SPA packet over real loopback UDP.
 
-use std::fs;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::{
+    fs,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::Parser;
 use fwknox_capture::UdpCapture;
 use fwknox_client::{build_spa_packet, send_udp_packet, Cli as ClientCli};
 use fwknox_config::load_daemon_config;
 use fwknox_daemon::{run, ShutdownSignal};
-use fwknox_firewall::{
-    AccessRule, FirewallBackend, FirewallError, MockBackend, RuleHandle,
-};
+use fwknox_firewall::{AccessRule, FirewallBackend, FirewallError, MockBackend, RuleHandle};
 use fwknox_replay::ReplayCache;
 
 /// A `FirewallBackend` wrapper that delegates to an inner `MockBackend`
@@ -100,11 +99,8 @@ fn client_sends_packet_daemon_installs_rule() {
     let cfg_path = write_test_config(dir.path(), &key, port);
     let cfg = load_daemon_config(&cfg_path).unwrap();
 
-    let capture = UdpCapture::bind(SocketAddr::V4(SocketAddrV4::new(
-        Ipv4Addr::LOCALHOST,
-        port,
-    )))
-    .unwrap();
+    let capture =
+        UdpCapture::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))).unwrap();
     let mut firewall = RecordingFirewall::new();
     let installed_log = firewall.log_handle();
     let replay = ReplayCache::new();
@@ -126,10 +122,14 @@ fn client_sends_packet_daemon_installs_rule() {
     // Build a packet via the client library and send it.
     let cli = ClientCli::parse_from([
         "fwknox",
-        "--destination", "127.0.0.1",
-        "--source-ip", "127.0.0.1",
-        "--access", "tcp/22",
-        "--master-key-base64", &B64.encode(key),
+        "--destination",
+        "127.0.0.1",
+        "--source-ip",
+        "127.0.0.1",
+        "--access",
+        "tcp/22",
+        "--master-key-base64",
+        &B64.encode(key),
     ]);
     // Allow the daemon a moment to enter its loop and bind.
     thread::sleep(Duration::from_millis(50));
@@ -157,6 +157,9 @@ fn client_sends_packet_daemon_installs_rule() {
     let installed = installed_log.lock().unwrap();
     assert_eq!(installed.len(), 1);
     let rule = &installed[0];
-    assert_eq!(rule.source_ip, "127.0.0.1".parse::<std::net::IpAddr>().unwrap());
+    assert_eq!(
+        rule.source_ip,
+        "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
+    );
     assert_eq!(rule.ports.len(), 1);
 }

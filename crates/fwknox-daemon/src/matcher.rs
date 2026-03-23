@@ -66,15 +66,13 @@ pub fn match_packet(wire: &[u8], stanzas: &[AccessStanza]) -> MatchResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine;
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
     use fwknox_config::{load_daemon_config, DaemonConfig};
-    use fwknox_proto::{
-        build_packet, PortProto, Protocol, SpaMessage, SpaPayload,
-    };
+    use fwknox_proto::{build_packet, PortProto, Protocol, SpaMessage, SpaPayload};
+
+    use super::*;
 
     #[allow(clippy::cast_possible_wrap)]
     fn now_unix() -> i64 {
@@ -198,7 +196,10 @@ master_key_base64 = "{b}"
         wire[signed_len..].copy_from_slice(&new_tag);
 
         match match_packet(&wire, &cfg.access) {
-            MatchResult::Rejected { stanza_name, reason } => {
+            MatchResult::Rejected {
+                stanza_name,
+                reason,
+            } => {
                 assert_eq!(stanza_name, "stanza-a");
                 // The corrupted ciphertext fails AEAD decryption.
                 assert!(matches!(reason, ProtoError::AeadFailed));

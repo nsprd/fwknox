@@ -4,8 +4,7 @@
 
 use std::process::ExitCode;
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::Parser;
 use fwknox_client::{
     build_spa_packet, generate_master_key_base64, send_udp_packet, Cli, ClientError,
@@ -69,7 +68,9 @@ fn real_main(cli: &Cli) -> Result<(), ClientError> {
 }
 
 fn load_server_entry(cli: &Cli) -> Result<Option<ServerEntry>, ClientError> {
-    let Some(name) = &cli.name else { return Ok(None) };
+    let Some(name) = &cli.name else {
+        return Ok(None);
+    };
     let path = cli
         .config
         .clone()

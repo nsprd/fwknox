@@ -2,17 +2,17 @@
 
 //! Build an SPA packet from CLI args + optional client config.
 
-use std::net::IpAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    net::IpAddr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use fwknox_config::{parse_port_proto, ServerEntry};
 use fwknox_proto::{build_packet, PortProto, SpaMessage, SpaPayload};
 use ring::rand::{SecureRandom, SystemRandom};
 
-use crate::cli::Cli;
-use crate::error::ClientError;
+use crate::{cli::Cli, error::ClientError};
 
 /// Build the SPA packet wire bytes from CLI args + an optional `ServerEntry`.
 ///
@@ -25,10 +25,7 @@ use crate::error::ClientError;
 ///   address (Phase 3 doesn't do `--resolve-ip` HTTPS resolution).
 /// - If `--username` is set, use it; otherwise read `$USER` (or default
 ///   to `"fwknox"` if `$USER` is unset).
-pub fn build_spa_packet(
-    cli: &Cli,
-    server: Option<&ServerEntry>,
-) -> Result<Vec<u8>, ClientError> {
+pub fn build_spa_packet(cli: &Cli, server: Option<&ServerEntry>) -> Result<Vec<u8>, ClientError> {
     let master_key = resolve_master_key(cli, server)?;
     let ports = resolve_ports(cli, server)?;
     let source_ip = resolve_source_ip(cli)?;
@@ -41,10 +38,7 @@ pub fn build_spa_packet(
         nonce,
         timestamp,
         username,
-        message: SpaMessage::Access {
-            source_ip,
-            ports,
-        },
+        message: SpaMessage::Access { source_ip, ports },
         client_timeout,
     };
 
@@ -52,10 +46,7 @@ pub fn build_spa_packet(
     Ok(wire)
 }
 
-fn resolve_master_key(
-    cli: &Cli,
-    server: Option<&ServerEntry>,
-) -> Result<[u8; 32], ClientError> {
+fn resolve_master_key(cli: &Cli, server: Option<&ServerEntry>) -> Result<[u8; 32], ClientError> {
     if let Some(b64) = &cli.master_key_base64 {
         return decode_master_key(b64);
     }
@@ -68,12 +59,10 @@ fn resolve_master_key(
 }
 
 fn decode_master_key(b64: &str) -> Result<[u8; 32], ClientError> {
-    let bytes = B64
-        .decode(b64)
-        .map_err(|e| ClientError::InvalidArgument {
-            field: "master-key-base64",
-            reason: e.to_string(),
-        })?;
+    let bytes = B64.decode(b64).map_err(|e| ClientError::InvalidArgument {
+        field: "master-key-base64",
+        reason: e.to_string(),
+    })?;
     if bytes.len() != 32 {
         return Err(ClientError::InvalidArgument {
             field: "master-key-base64",
@@ -85,10 +74,7 @@ fn decode_master_key(b64: &str) -> Result<[u8; 32], ClientError> {
     Ok(out)
 }
 
-fn resolve_ports(
-    cli: &Cli,
-    server: Option<&ServerEntry>,
-) -> Result<Vec<PortProto>, ClientError> {
+fn resolve_ports(cli: &Cli, server: Option<&ServerEntry>) -> Result<Vec<PortProto>, ClientError> {
     if let Some(s) = &cli.access {
         return parse_access_string(s);
     }
@@ -124,12 +110,12 @@ fn parse_access_string(s: &str) -> Result<Vec<PortProto>, ClientError> {
 
 fn resolve_source_ip(cli: &Cli) -> Result<IpAddr, ClientError> {
     if let Some(s) = &cli.source_ip {
-        return s.parse().map_err(|e: std::net::AddrParseError| {
-            ClientError::InvalidArgument {
+        return s
+            .parse()
+            .map_err(|e: std::net::AddrParseError| ClientError::InvalidArgument {
                 field: "source-ip",
                 reason: e.to_string(),
-            }
-        });
+            });
     }
     // Phase 3 default: assume the user is on the same host or behind
     // a NAT that exposes 127.0.0.1. Phase 4 will add --resolve-ip.
@@ -153,27 +139,31 @@ fn current_unix() -> i64 {
 fn random_nonce() -> Result<[u8; 16], ClientError> {
     let rng = SystemRandom::new();
     let mut out = [0u8; 16];
-    rng.fill(&mut out).map_err(|_| ClientError::InvalidArgument {
-        field: "csprng",
-        reason: "system random number generator failed".into(),
-    })?;
+    rng.fill(&mut out)
+        .map_err(|_| ClientError::InvalidArgument {
+            field: "csprng",
+            reason: "system random number generator failed".into(),
+        })?;
     Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine;
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
     use clap::Parser;
     use fwknox_proto::{parse_packet, Protocol};
+
+    use super::*;
 
     fn cli_with_inline_args() -> Cli {
         Cli::parse_from([
             "fwknox",
-            "--destination", "127.0.0.1",
-            "--access", "tcp/22",
-            "--master-key-base64", &B64.encode([0x42u8; 32]),
+            "--destination",
+            "127.0.0.1",
+            "--access",
+            "tcp/22",
+            "--master-key-base64",
+            &B64.encode([0x42u8; 32]),
         ])
     }
 
@@ -201,10 +191,7 @@ mod tests {
 
     #[test]
     fn missing_access_returns_missing_argument() {
-        let cli = Cli::parse_from([
-            "fwknox",
-            "--master-key-base64", &B64.encode([0u8; 32]),
-        ]);
+        let cli = Cli::parse_from(["fwknox", "--master-key-base64", &B64.encode([0u8; 32])]);
         let err = build_spa_packet(&cli, None).unwrap_err();
         assert!(matches!(err, ClientError::MissingArgument(_)));
     }
@@ -213,8 +200,10 @@ mod tests {
     fn invalid_master_key_length_is_rejected() {
         let cli = Cli::parse_from([
             "fwknox",
-            "--access", "tcp/22",
-            "--master-key-base64", &B64.encode([0u8; 16]), // wrong length
+            "--access",
+            "tcp/22",
+            "--master-key-base64",
+            &B64.encode([0u8; 16]), // wrong length
         ]);
         let err = build_spa_packet(&cli, None).unwrap_err();
         assert!(matches!(err, ClientError::InvalidArgument { .. }));

@@ -10,9 +10,11 @@ use fwknox_firewall::FirewallBackend;
 use fwknox_replay::ReplayCache;
 use tracing::{debug, error, info, warn};
 
-use crate::error::DaemonError;
-use crate::pipeline::{process_packet, ProcessResult};
-use crate::shutdown::ShutdownSignal;
+use crate::{
+    error::DaemonError,
+    pipeline::{process_packet, ProcessResult},
+    shutdown::ShutdownSignal,
+};
 
 /// How often the main loop wakes up to check the shutdown flag.
 pub const LOOP_TICK: Duration = Duration::from_millis(500);
@@ -101,7 +103,10 @@ fn handle_packet(
         Ok(ProcessResult::NoMatch) => {
             debug!(source = %pkt.source_ip, "no stanza matched (dropped)");
         }
-        Ok(ProcessResult::Rejected { stanza_name, reason }) => {
+        Ok(ProcessResult::Rejected {
+            stanza_name,
+            reason,
+        }) => {
             warn!(
                 stanza = %stanza_name,
                 source = %pkt.source_ip,
@@ -121,17 +126,19 @@ fn handle_packet(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Mutex;
-    use std::thread;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        sync::Mutex,
+        thread,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine;
+    use base64::{engine::general_purpose::STANDARD as B64, Engine};
     use fwknox_capture::{CaptureError, CapturedPacket};
     use fwknox_config::load_daemon_config;
     use fwknox_firewall::MockBackend;
     use fwknox_proto::{build_packet, PortProto, Protocol, SpaMessage, SpaPayload};
+
+    use super::*;
 
     /// In-memory capture that hands out a queue of pre-built packets.
     #[derive(Debug)]
@@ -153,10 +160,7 @@ mod tests {
             unreachable!()
         }
 
-        fn recv_timeout(
-            &self,
-            _timeout: Duration,
-        ) -> Result<Option<CapturedPacket>, CaptureError> {
+        fn recv_timeout(&self, _timeout: Duration) -> Result<Option<CapturedPacket>, CaptureError> {
             Ok(self.queue.lock().unwrap().pop())
         }
     }

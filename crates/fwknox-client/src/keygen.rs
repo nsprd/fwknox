@@ -2,8 +2,7 @@
 
 //! Master-key generation helper.
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::error::ClientError;

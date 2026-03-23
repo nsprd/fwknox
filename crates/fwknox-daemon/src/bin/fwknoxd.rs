@@ -2,8 +2,10 @@
 
 //! `fwknoxd` daemon binary entrypoint.
 
-use std::net::{IpAddr, SocketAddr};
-use std::process::ExitCode;
+use std::{
+    net::{IpAddr, SocketAddr},
+    process::ExitCode,
+};
 
 use clap::Parser;
 use fwknox_capture::UdpCapture;

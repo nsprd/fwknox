@@ -4,8 +4,7 @@
 
 use std::time::Duration;
 
-use crate::error::CaptureError;
-use crate::packet::CapturedPacket;
+use crate::{error::CaptureError, packet::CapturedPacket};
 
 /// A pluggable packet capture source. Implementations must be
 /// `Send + Sync` because the daemon's capture worker may be a separate
@@ -22,8 +21,5 @@ pub trait CaptureBackend: Send + Sync {
     ///
     /// The daemon's main loop uses this so it can poll its shutdown flag
     /// without holding a thread inside a syscall indefinitely.
-    fn recv_timeout(
-        &self,
-        timeout: Duration,
-    ) -> Result<Option<CapturedPacket>, CaptureError>;
+    fn recv_timeout(&self, timeout: Duration) -> Result<Option<CapturedPacket>, CaptureError>;
 }

@@ -8,8 +8,10 @@
 //! the loop notices and exits cleanly (flushes the firewall, saves the
 //! replay cache).
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 /// Atomic shutdown flag shared between the signal handler and the main loop.
 #[derive(Debug, Clone, Default)]
