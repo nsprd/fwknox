@@ -17,8 +17,11 @@ workspace = true
 
 [dev-dependencies]
 base64.workspace = true
+clap.workspace = true
 fwknox-capture.workspace = true
+fwknox-client.workspace = true
 fwknox-config.workspace = true
+fwknox-daemon.workspace = true
 fwknox-firewall.workspace = true
 fwknox-proto.workspace = true
 fwknox-replay.workspace = true

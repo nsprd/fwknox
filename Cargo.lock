@@ -256,8 +256,11 @@ name = "fwknox-integration-tests"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "clap",
  "fwknox-capture",
+ "fwknox-client",
  "fwknox-config",
+ "fwknox-daemon",
  "fwknox-firewall",
  "fwknox-proto",
  "fwknox-replay",
