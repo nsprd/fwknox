@@ -18,9 +18,9 @@ pub struct Cli {
     #[arg(short = 'D', long)]
     pub destination: Option<String>,
 
-    /// Server port.
-    #[arg(short = 'p', long, default_value_t = 62201)]
-    pub port: u16,
+    /// Server port (defaults to 62201 or the named server entry's port).
+    #[arg(short = 'p', long)]
+    pub port: Option<u16>,
 
     /// Requested ports as a comma-separated list of `proto/port`
     /// (e.g. `tcp/22,udp/53`).

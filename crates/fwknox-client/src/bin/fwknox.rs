@@ -105,14 +105,11 @@ fn resolve_destination(cli: &Cli, server: Option<&ServerEntry>) -> Result<String
 }
 
 fn resolve_port(cli: &Cli, server: Option<&ServerEntry>) -> u16 {
-    // Clap default is 62201. If the user passed an explicit port that
-    // matches the default, that's fine; if a server entry exists, prefer
-    // its port unless the CLI overrode it.
-    if cli.port != 62201 {
-        return cli.port;
+    if let Some(p) = cli.port {
+        return p;
     }
     if let Some(s) = server {
         return s.port;
     }
-    cli.port
+    62201
 }

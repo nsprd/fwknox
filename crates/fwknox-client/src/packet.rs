@@ -28,11 +28,15 @@ use crate::{cli::Cli, error::ClientError};
 pub fn build_spa_packet(cli: &Cli, server: Option<&ServerEntry>) -> Result<Vec<u8>, ClientError> {
     let master_key = resolve_master_key(cli, server)?;
     let ports = resolve_ports(cli, server)?;
-    let source_ip = resolve_source_ip(cli)?;
+    let source_ip = resolve_source_ip(cli, server)?;
     let username = resolve_username(cli);
     let timestamp = current_unix();
     let nonce = random_nonce()?;
-    let client_timeout = cli.timeout.and_then(|t| u32::try_from(t).ok());
+    let client_timeout = cli.timeout.and_then(|t| u32::try_from(t).ok()).or_else(|| {
+        server
+            .and_then(|s| s.fw_timeout)
+            .and_then(|d| u32::try_from(d.as_secs()).ok())
+    });
 
     let payload = SpaPayload {
         nonce,
@@ -108,7 +112,8 @@ fn parse_access_string(s: &str) -> Result<Vec<PortProto>, ClientError> {
     Ok(out)
 }
 
-fn resolve_source_ip(cli: &Cli) -> Result<IpAddr, ClientError> {
+fn resolve_source_ip(cli: &Cli, server: Option<&ServerEntry>) -> Result<IpAddr, ClientError> {
+    // CLI override takes precedence.
     if let Some(s) = &cli.source_ip {
         return s
             .parse()
@@ -117,8 +122,19 @@ fn resolve_source_ip(cli: &Cli) -> Result<IpAddr, ClientError> {
                 reason: e.to_string(),
             });
     }
-    // Phase 3 default: assume the user is on the same host or behind
-    // a NAT that exposes 127.0.0.1. Phase 4 will add --resolve-ip.
+    // Then the named server entry (ignoring the "auto" sentinel, which
+    // is reserved for a future `--resolve-ip` HTTPS flow in Phase 4).
+    if let Some(s) = server {
+        if s.source_ip != "auto" {
+            return s.source_ip.parse().map_err(|e: std::net::AddrParseError| {
+                ClientError::InvalidArgument {
+                    field: "server.source_ip",
+                    reason: e.to_string(),
+                }
+            });
+        }
+    }
+    // Final fallback: loopback.
     Ok("127.0.0.1".parse().unwrap())
 }
 

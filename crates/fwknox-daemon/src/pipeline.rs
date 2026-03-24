@@ -19,9 +19,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use fwknox_capture::CapturedPacket;
 use fwknox_config::DaemonConfig;
 use fwknox_firewall::{AccessRule, FirewallBackend, RuleHandle};
-use fwknox_proto::{
-    validate_against_clock, SpaMessage, DEFAULT_MAX_AGE_SECS, DEFAULT_MAX_SKEW_SECS,
-};
+use fwknox_proto::{validate_against_clock, SpaMessage, DEFAULT_MAX_SKEW_SECS};
 use fwknox_replay::ReplayCache;
 
 use crate::matcher::{match_packet, MatchResult};
@@ -64,9 +62,10 @@ fn now_unix() -> i64 {
 /// Run the full per-packet processing pipeline.
 ///
 /// Returns `Ok(ProcessResult)` for every outcome that the daemon can
-/// recover from (the main loop logs and continues). Returns `Err` only
-/// when the firewall backend itself fails — that's a fatal condition
-/// because subsequent rule installations will also fail.
+/// recover from (the main loop logs and continues). Returns `Err` when
+/// the firewall backend itself fails. The main loop currently logs
+/// and continues on backend errors; a future phase may escalate
+/// certain errors to daemon shutdown.
 pub fn process_packet(
     captured: &CapturedPacket,
     config: &DaemonConfig,
@@ -98,12 +97,8 @@ pub fn process_packet(
         .expect("stanza name returned by matcher must exist in config");
 
     // Step 2: timestamp validation.
-    if let Err(e) = validate_against_clock(
-        &payload,
-        now_unix(),
-        DEFAULT_MAX_AGE_SECS,
-        DEFAULT_MAX_SKEW_SECS,
-    ) {
+    let max_age = i64::try_from(config.daemon.max_spa_packet_age.as_secs()).unwrap_or(i64::MAX);
+    if let Err(e) = validate_against_clock(&payload, now_unix(), max_age, DEFAULT_MAX_SKEW_SECS) {
         return Ok(ProcessResult::Rejected {
             stanza_name,
             reason: e.to_string(),

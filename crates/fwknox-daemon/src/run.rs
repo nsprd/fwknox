@@ -17,11 +17,11 @@ use crate::{
 };
 
 /// How often the main loop wakes up to check the shutdown flag.
-pub const LOOP_TICK: Duration = Duration::from_millis(500);
+pub(crate) const LOOP_TICK: Duration = Duration::from_millis(500);
 
 /// How often (in loop ticks) the main loop prunes expired entries from
 /// the replay cache.
-pub const PRUNE_EVERY_TICKS: u64 = 600; // ~5 minutes at 500 ms ticks
+pub(crate) const PRUNE_EVERY_TICKS: u64 = 600; // ~5 minutes at 500 ms ticks
 
 /// Run the daemon main loop until `shutdown` is tripped.
 ///
