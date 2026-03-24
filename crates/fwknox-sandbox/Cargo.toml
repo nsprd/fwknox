@@ -12,3 +12,5 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
+tracing.workspace = true
