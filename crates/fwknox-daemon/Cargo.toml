@@ -1,28 +1,32 @@
 [package]
-name = "fwknox-integration-tests"
-description = "Workspace-level integration tests"
+name = "fwknox-daemon"
+description = "fwknox daemon library and binary"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-publish = false
-
-[lib]
-path = "src/lib.rs"
+repository.workspace = true
+homepage.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-
-[dev-dependencies]
-base64.workspace = true
 clap.workspace = true
 fwknox-capture.workspace = true
-fwknox-client.workspace = true
 fwknox-config.workspace = true
-fwknox-daemon.workspace = true
 fwknox-firewall.workspace = true
 fwknox-proto.workspace = true
 fwknox-replay.workspace = true
+signal-hook.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
 tempfile.workspace = true
+
+[[bin]]
+name = "fwknoxd"
+path = "src/bin/fwknoxd.rs"
