@@ -15,6 +15,7 @@
 pub mod capabilities;
 mod error;
 pub mod landlock;
+pub mod notify;
 pub mod privdrop;
 
 pub use error::SandboxError;

@@ -15,5 +15,6 @@ workspace = true
 caps.workspace = true
 landlock.workspace = true
 nix.workspace = true
+sd-notify.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
