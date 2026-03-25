@@ -14,5 +14,6 @@
 
 pub mod capabilities;
 mod error;
+pub mod privdrop;
 
 pub use error::SandboxError;
