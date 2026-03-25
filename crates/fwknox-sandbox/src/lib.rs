@@ -12,6 +12,7 @@
 //! The `apply` module glues these together into a single call the
 //! daemon makes after binding sockets and initialising the firewall.
 
+pub mod capabilities;
 mod error;
 
 pub use error::SandboxError;
