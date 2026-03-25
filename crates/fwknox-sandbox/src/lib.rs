@@ -8,14 +8,14 @@
 //! - `privdrop`: switch the process to an unprivileged user/group
 //! - `landlock`: install a Landlock ruleset restricting filesystem access
 //! - `notify`: `sd_notify` wrappers for systemd integration
-//!
-//! The `apply` module glues these together into a single call the
-//! daemon makes after binding sockets and initialising the firewall.
+//! - `apply`: high-level orchestrator that runs all layers in order
 
+mod apply;
 pub mod capabilities;
 mod error;
 pub mod landlock;
 pub mod notify;
 pub mod privdrop;
 
+pub use apply::{apply, LandlockConfig, PrivDropTarget, SandboxConfig};
 pub use error::SandboxError;
