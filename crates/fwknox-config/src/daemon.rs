@@ -81,7 +81,15 @@ pub struct DaemonSection {
     #[serde(default = "yes")]
     pub enable_sandbox: bool,
     /// Whether to install a Landlock filesystem ruleset.
-    #[serde(default = "yes")]
+    ///
+    /// Defaults to `false` in Phase 4 because the current
+    /// `nftables-rs` firewall backend spawns `nft` as a subprocess
+    /// on every rule operation, and a Landlock ruleset covering
+    /// the daemon would block that spawn. Phase 5's privilege
+    /// separation will move firewall ops to a separate process
+    /// that doesn't need Landlock, at which point the default
+    /// will flip back to `true`.
+    #[serde(default)]
     pub landlock_enabled: bool,
 }
 
@@ -105,7 +113,7 @@ impl Default for DaemonSection {
             enable_systemd: true,
             log_level: default_log_level(),
             enable_sandbox: true,
-            landlock_enabled: true,
+            landlock_enabled: false,
         }
     }
 }
@@ -424,9 +432,12 @@ master_key_base64 = "{}"
     }
 
     #[test]
-    fn sandbox_fields_default_to_true() {
+    fn enable_sandbox_defaults_to_true_landlock_defaults_to_false() {
         let cfg: DaemonConfig = toml::from_str(&minimal_config_toml()).unwrap();
         assert!(cfg.daemon.enable_sandbox);
-        assert!(cfg.daemon.landlock_enabled);
+        // Landlock defaults to false in Phase 4 because the current
+        // nftables-rs backend spawns nft as a subprocess. Phase 5
+        // will re-enable it by default after privsep lands.
+        assert!(!cfg.daemon.landlock_enabled);
     }
 }

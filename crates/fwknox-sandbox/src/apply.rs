@@ -73,9 +73,10 @@ pub fn apply(config: &SandboxConfig) -> Result<(), SandboxError> {
         "applying sandbox"
     );
 
-    // Step 1: capabilities. We drop AFTER any setuid step because
-    // setuid would silently clear some bits anyway; trimming beforehand
-    // keeps the intent explicit.
+    // Step 1: capabilities. We drop BEFORE privdrop because setuid
+    // would silently clear some capability bits anyway; trimming
+    // explicitly beforehand makes the intent auditable and means the
+    // kept-caps list is what actually survives.
     capabilities::drop_all_except(&config.keep_caps)?;
 
     // Step 2: user/group. This happens BEFORE Landlock because

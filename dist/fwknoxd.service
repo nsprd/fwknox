@@ -11,11 +11,20 @@ WatchdogSec=30
 Restart=on-failure
 RestartSec=5
 
+# Create /run/fwknox and /var/lib/fwknox automatically, owned by the
+# fwknox user. systemd manages the lifetime of these directories so
+# the daemon doesn't need to.
+RuntimeDirectory=fwknox
+RuntimeDirectoryMode=0755
+StateDirectory=fwknox
+StateDirectoryMode=0750
+
 # Let the daemon start as root so it can bind the UDP port, init
 # nftables, and drop privileges itself. fwknox-sandbox handles the
 # rest: drops to CAP_NET_ADMIN, switches to the fwknox user/group,
 # and installs a Landlock filesystem ruleset.
 AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
 
 # systemd-level hardening on top of fwknox's own sandbox.
 NoNewPrivileges=true
@@ -32,6 +41,7 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 # The daemon needs to read its config and write to its state dir.
 ReadWritePaths=/var/lib/fwknox /run/fwknox

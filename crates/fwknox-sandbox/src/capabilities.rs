@@ -42,7 +42,7 @@ pub fn drop_all_except(keep: &[Capability]) -> Result<(), SandboxError> {
         }
         // Bounding set drop may require CAP_SETPCAP.
         if let Err(e) = caps::drop(None, CapSet::Bounding, cap) {
-            debug!(cap = ?cap, error = %e, "bounding set drop skipped");
+            warn!(cap = ?cap, error = %e, "bounding set drop skipped (process lacks CAP_SETPCAP?)");
         }
     }
     // Re-check the effective set to confirm.

@@ -96,16 +96,25 @@ fn apply_sandbox(config: &fwknox_config::DaemonConfig) -> Result<(), DaemonError
     };
 
     let landlock = if config.daemon.landlock_enabled {
+        // Operators who opt into Landlock must understand the
+        // current nftables backend spawns `nft` as a subprocess
+        // and will fail under Landlock. We warn loudly and still
+        // install the policy the operator asked for.
+        tracing::warn!(
+            "Landlock is enabled but the current nftables backend spawns nft as a subprocess; \
+             rule installation may fail. Phase 5 will fix this by moving firewall ops behind privsep."
+        );
+        // Landlock policy covers only the replay-cache parent
+        // directory. We no longer reference the pid file (which the
+        // daemon doesn't write) or the cache file (which may not
+        // exist on first start). The parent directory is the stable
+        // unit of Landlock access.
         Some(LandlockConfig {
-            read_only: vec![config.daemon.pid_file.clone()],
-            read_write: vec![
-                config.replay.cache_path.clone(),
-                parent_or_current(&config.replay.cache_path),
-                parent_or_current(&config.daemon.pid_file),
-            ],
+            read_only: vec![],
+            read_write: vec![parent_or_current(&config.replay.cache_path)],
         })
     } else {
-        info!("Landlock disabled in config");
+        info!("Landlock disabled (Phase 4 default; see config docs for rationale)");
         None
     };
 
