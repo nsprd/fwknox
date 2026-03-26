@@ -27,6 +27,7 @@ pub struct DaemonConfig {
 
 /// The `[daemon]` section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct DaemonSection {
     /// IP address the daemon binds to.
     #[serde(default = "default_listen_addr")]
@@ -76,6 +77,12 @@ pub struct DaemonSection {
     /// Log level: error/warn/info/debug/trace.
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    /// Whether to drop capabilities and privileges on startup.
+    #[serde(default = "yes")]
+    pub enable_sandbox: bool,
+    /// Whether to install a Landlock filesystem ruleset.
+    #[serde(default = "yes")]
+    pub landlock_enabled: bool,
 }
 
 impl Default for DaemonSection {
@@ -97,6 +104,8 @@ impl Default for DaemonSection {
             max_fw_timeout: default_max_fw_timeout(),
             enable_systemd: true,
             log_level: default_log_level(),
+            enable_sandbox: true,
+            landlock_enabled: true,
         }
     }
 }
@@ -389,5 +398,35 @@ enable_nat = true
     fn require_source_match_default_is_true() {
         let cfg: DaemonConfig = toml::from_str(&minimal_config_toml()).unwrap();
         assert!(cfg.access[0].require_source_match);
+    }
+
+    #[test]
+    fn sandbox_fields_can_be_disabled_via_toml() {
+        let body = format!(
+            r#"
+[daemon]
+enable_sandbox = false
+landlock_enabled = false
+
+[replay]
+
+[[access]]
+name = "t"
+source = ["any"]
+open_ports = ["tcp/22"]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        assert!(!cfg.daemon.enable_sandbox);
+        assert!(!cfg.daemon.landlock_enabled);
+    }
+
+    #[test]
+    fn sandbox_fields_default_to_true() {
+        let cfg: DaemonConfig = toml::from_str(&minimal_config_toml()).unwrap();
+        assert!(cfg.daemon.enable_sandbox);
+        assert!(cfg.daemon.landlock_enabled);
     }
 }
