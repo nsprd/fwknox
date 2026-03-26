@@ -2,10 +2,7 @@
 
 //! `fwknoxd` daemon binary entrypoint.
 
-use std::{
-    net::{IpAddr, SocketAddr},
-    process::ExitCode,
-};
+use std::process::ExitCode;
 
 use clap::Parser;
 use fwknox_capture::UdpCapture;
@@ -44,7 +41,11 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     info!(config = %cli.config.display(), "loading daemon config");
     let config = load_daemon_config(&cli.config)?;
 
-    // Phase 3 only ships the nftables backend; iptables is deferred.
+    // Phase 4: apply the sandbox AFTER initialising the firewall and
+    // binding sockets (those need root/netlink) but BEFORE entering
+    // the main loop.
+
+    // Step 1: firewall backend (needs CAP_NET_ADMIN).
     let mut firewall: Box<dyn FirewallBackend> = match config.daemon.firewall_backend {
         ConfigBackend::Nftables => Box::new(NftablesBackend::new()),
         ConfigBackend::Iptables => {
@@ -56,15 +57,79 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
         }
     };
 
-    let bind_addr: IpAddr = config.daemon.listen_addr;
-    let listen_addr = SocketAddr::new(bind_addr, config.daemon.listen_port);
+    // Step 2: capture socket (binds before sandbox so we don't need
+    // the CAP_NET_BIND_SERVICE capability after the drop).
+    let bind_addr: std::net::IpAddr = config.daemon.listen_addr;
+    let listen_addr = std::net::SocketAddr::new(bind_addr, config.daemon.listen_port);
     info!(addr = %listen_addr, "binding capture socket");
     let capture = UdpCapture::bind(listen_addr)?;
 
+    // Step 3: replay cache.
     let replay = ReplayCache::load_from_file(&config.replay.cache_path)?;
 
+    // Step 4: signal handlers.
     let shutdown = ShutdownSignal::new();
     shutdown.install_handlers()?;
 
+    // Step 5: sandbox.
+    if config.daemon.enable_sandbox {
+        apply_sandbox(&config)?;
+    } else {
+        info!("sandbox disabled in config");
+    }
+
     run(&config, &capture, firewall.as_mut(), &replay, &shutdown)
+}
+
+fn apply_sandbox(config: &fwknox_config::DaemonConfig) -> Result<(), DaemonError> {
+    use caps::Capability;
+    use fwknox_sandbox::{apply, LandlockConfig, PrivDropTarget, SandboxConfig};
+
+    let drop_to = if fwknox_sandbox::privdrop::is_root() {
+        Some(PrivDropTarget {
+            user: config.daemon.run_user.clone(),
+            group: config.daemon.run_group.clone(),
+        })
+    } else {
+        info!("not running as root; skipping user/group drop");
+        None
+    };
+
+    let landlock = if config.daemon.landlock_enabled {
+        // Operators who opt into Landlock must understand the
+        // current nftables backend spawns `nft` as a subprocess
+        // and will fail under Landlock. We warn loudly and still
+        // install the policy the operator asked for.
+        tracing::warn!(
+            "Landlock is enabled but the current nftables backend spawns nft as a subprocess; \
+             rule installation may fail. Phase 5 will fix this by moving firewall ops behind privsep."
+        );
+        // Landlock policy covers only the replay-cache parent
+        // directory. We no longer reference the pid file (which the
+        // daemon doesn't write) or the cache file (which may not
+        // exist on first start). The parent directory is the stable
+        // unit of Landlock access.
+        Some(LandlockConfig {
+            read_only: vec![],
+            read_write: vec![parent_or_current(&config.replay.cache_path)],
+        })
+    } else {
+        info!("Landlock disabled (Phase 4 default; see config docs for rationale)");
+        None
+    };
+
+    let sandbox_config = SandboxConfig {
+        keep_caps: vec![Capability::CAP_NET_ADMIN],
+        drop_to,
+        landlock,
+    };
+
+    apply(&sandbox_config).map_err(DaemonError::from)
+}
+
+fn parent_or_current(path: &std::path::Path) -> std::path::PathBuf {
+    path.parent().map_or_else(
+        || std::path::PathBuf::from("."),
+        std::path::Path::to_path_buf,
+    )
 }

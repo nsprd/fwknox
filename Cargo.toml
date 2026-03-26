@@ -6,6 +6,7 @@ members = [
     "crates/fwknox-replay",
     "crates/fwknox-firewall",
     "crates/fwknox-capture",
+    "crates/fwknox-sandbox",
     "crates/fwknox-client",
     "crates/fwknox-daemon",
     "tests/integration",
@@ -45,6 +46,11 @@ signal-hook         = "0.3"
 tracing-subscriber  = { version = "0.3", features = ["env-filter"] }
 fwknox-client       = { path = "crates/fwknox-client" }
 fwknox-daemon       = { path = "crates/fwknox-daemon" }
+caps                = "0.5"
+nix                 = { version = "0.29", features = ["user"] }
+landlock            = "0.4"
+sd-notify           = "0.4"
+fwknox-sandbox      = { path = "crates/fwknox-sandbox" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -45,6 +45,11 @@ pub fn run(
     );
     firewall.init()?;
 
+    // Tell systemd we're ready. No-op outside systemd.
+    if let Err(e) = fwknox_sandbox::notify::ready() {
+        warn!(error = %e, "sd_notify(READY=1) failed (not running under systemd?)");
+    }
+
     let mut tick: u64 = 0;
     let result = loop {
         if shutdown.is_shutdown() {
@@ -60,6 +65,9 @@ pub fn run(
                 warn!(error = %e, "capture recv failed; continuing");
             }
         }
+        // Heartbeat systemd every loop iteration. The socket write is
+        // cheap (just an AF_UNIX sendmsg) and no-op outside systemd.
+        let _ = fwknox_sandbox::notify::watchdog();
         tick = tick.wrapping_add(1);
         if tick.is_multiple_of(PRUNE_EVERY_TICKS) {
             let pruned = replay.prune_older_than(config.replay.max_age);
@@ -70,6 +78,7 @@ pub fn run(
     };
 
     info!("fwknox daemon shutting down");
+    let _ = fwknox_sandbox::notify::stopping();
     if let Err(e) = firewall.flush() {
         error!(error = %e, "firewall flush failed during shutdown");
     }
