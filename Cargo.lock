@@ -262,12 +262,14 @@ name = "fwknox-daemon"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "caps",
  "clap",
  "fwknox-capture",
  "fwknox-config",
  "fwknox-firewall",
  "fwknox-proto",
  "fwknox-replay",
+ "fwknox-sandbox",
  "signal-hook",
  "tempfile",
  "thiserror",

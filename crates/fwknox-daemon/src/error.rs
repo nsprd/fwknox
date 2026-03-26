@@ -24,6 +24,10 @@ pub enum DaemonError {
     #[error("replay cache error: {0}")]
     Replay(#[from] fwknox_replay::ReplayError),
 
+    /// The sandbox layer failed to apply.
+    #[error("sandbox error: {0}")]
+    Sandbox(#[from] fwknox_sandbox::SandboxError),
+
     /// A protocol-layer failure during processing.
     #[error("protocol error: {0}")]
     Proto(#[from] fwknox_proto::ProtoError),
