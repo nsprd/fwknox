@@ -46,8 +46,8 @@ pub fn drop_all_except(keep: &[Capability]) -> Result<(), SandboxError> {
         }
     }
     // Re-check the effective set to confirm.
-    let effective = caps::read(None, CapSet::Effective)
-        .map_err(|e| SandboxError::Capability(e.to_string()))?;
+    let effective =
+        caps::read(None, CapSet::Effective).map_err(|e| SandboxError::Capability(e.to_string()))?;
     for kept in keep {
         if !effective.contains(kept) {
             warn!(cap = ?kept, "kept capability not actually present after drop");

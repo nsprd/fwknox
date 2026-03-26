@@ -90,8 +90,9 @@ pub fn apply(policy: &FilesystemPolicy<'_>) -> Result<(), SandboxError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     #[test]
     fn filesystem_policy_construction() {

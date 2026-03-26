@@ -43,10 +43,15 @@ pub fn resolve_group(name: &str) -> Result<Gid, SandboxError> {
 pub fn drop_to(user: &str, group: &str) -> Result<(), SandboxError> {
     let uid = resolve_user(user)?;
     let gid = resolve_group(group)?;
-    info!(user, group, uid = uid.as_raw(), gid = gid.as_raw(), "dropping privileges");
+    info!(
+        user,
+        group,
+        uid = uid.as_raw(),
+        gid = gid.as_raw(),
+        "dropping privileges"
+    );
 
-    setgroups(&[gid])
-        .map_err(|e| SandboxError::PrivDrop(format!("setgroups failed: {e}")))?;
+    setgroups(&[gid]).map_err(|e| SandboxError::PrivDrop(format!("setgroups failed: {e}")))?;
     setgid(gid).map_err(|e| SandboxError::PrivDrop(format!("setgid failed: {e}")))?;
     setuid(uid).map_err(|e| SandboxError::PrivDrop(format!("setuid failed: {e}")))?;
     Ok(())

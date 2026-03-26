@@ -119,6 +119,8 @@ fn apply_sandbox(config: &fwknox_config::DaemonConfig) -> Result<(), DaemonError
 }
 
 fn parent_or_current(path: &std::path::Path) -> std::path::PathBuf {
-    path.parent()
-        .map_or_else(|| std::path::PathBuf::from("."), std::path::Path::to_path_buf)
+    path.parent().map_or_else(
+        || std::path::PathBuf::from("."),
+        std::path::Path::to_path_buf,
+    )
 }

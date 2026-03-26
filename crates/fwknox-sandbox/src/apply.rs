@@ -17,10 +17,12 @@ use std::path::PathBuf;
 use caps::Capability;
 use tracing::info;
 
-use crate::capabilities;
-use crate::error::SandboxError;
-use crate::landlock::{self, FilesystemPolicy};
-use crate::privdrop;
+use crate::{
+    capabilities,
+    error::SandboxError,
+    landlock::{self, FilesystemPolicy},
+    privdrop,
+};
 
 /// The user/group the sandbox should drop to.
 #[derive(Debug, Clone)]
