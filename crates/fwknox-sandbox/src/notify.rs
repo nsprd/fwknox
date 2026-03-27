@@ -22,18 +22,18 @@ use crate::error::SandboxError;
 
 /// Send `READY=1` to systemd.
 pub fn ready() -> Result<(), SandboxError> {
-    sd_notify::notify(false, &[sd_notify::NotifyState::Ready]).map_err(SandboxError::SdNotify)
+    sd_notify::notify(&[sd_notify::NotifyState::Ready]).map_err(SandboxError::SdNotify)
 }
 
 /// Send a watchdog heartbeat (`WATCHDOG=1`) to systemd.
 pub fn watchdog() -> Result<(), SandboxError> {
-    sd_notify::notify(false, &[sd_notify::NotifyState::Watchdog]).map_err(SandboxError::SdNotify)
+    sd_notify::notify(&[sd_notify::NotifyState::Watchdog]).map_err(SandboxError::SdNotify)
 }
 
 /// Send `STOPPING=1` to systemd so it doesn't treat the shutdown
 /// sequence as a hang.
 pub fn stopping() -> Result<(), SandboxError> {
-    sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]).map_err(SandboxError::SdNotify)
+    sd_notify::notify(&[sd_notify::NotifyState::Stopping]).map_err(SandboxError::SdNotify)
 }
 
 /// Returns the configured watchdog interval, if any. The daemon should
@@ -41,13 +41,8 @@ pub fn stopping() -> Result<(), SandboxError> {
 /// returned window.
 #[must_use]
 pub fn watchdog_interval() -> Option<std::time::Duration> {
-    // sd_notify's watchdog_enabled returns a microsecond count.
-    let mut usec: u64 = 0;
-    if sd_notify::watchdog_enabled(false, &mut usec) {
-        Some(std::time::Duration::from_micros(usec))
-    } else {
-        None
-    }
+    // sd_notify 0.5 returns Option<Duration> directly.
+    sd_notify::watchdog_enabled()
 }
 
 #[cfg(test)]
