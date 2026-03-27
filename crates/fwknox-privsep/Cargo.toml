@@ -12,3 +12,9 @@ homepage.workspace = true
 workspace = true
 
 [dependencies]
+fwknox-proto.workspace = true
+nix.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
