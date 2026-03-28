@@ -17,6 +17,7 @@ clap.workspace = true
 fwknox-capture.workspace = true
 fwknox-config.workspace = true
 fwknox-firewall.workspace = true
+fwknox-privsep.workspace = true
 fwknox-proto.workspace = true
 fwknox-replay.workspace = true
 fwknox-sandbox.workspace = true

@@ -267,6 +267,7 @@ dependencies = [
  "fwknox-capture",
  "fwknox-config",
  "fwknox-firewall",
+ "fwknox-privsep",
  "fwknox-proto",
  "fwknox-replay",
  "fwknox-sandbox",
