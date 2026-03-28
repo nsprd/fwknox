@@ -14,7 +14,9 @@ workspace = true
 [dependencies]
 caps.workspace = true
 landlock.workspace = true
+libc.workspace = true
 nix.workspace = true
 sd-notify.workspace = true
+seccompiler.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
