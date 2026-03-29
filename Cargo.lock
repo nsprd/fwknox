@@ -271,6 +271,7 @@ dependencies = [
  "fwknox-proto",
  "fwknox-replay",
  "fwknox-sandbox",
+ "nix",
  "signal-hook",
  "tempfile",
  "thiserror",

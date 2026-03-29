@@ -32,6 +32,10 @@ pub enum DaemonError {
     #[error("protocol error: {0}")]
     Proto(#[from] fwknox_proto::ProtoError),
 
+    /// A privilege-separation operation failed.
+    #[error("privsep error: {0}")]
+    Privsep(#[from] fwknox_privsep::PrivsepError),
+
     /// An I/O failure during signal-handler setup or other host work.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

@@ -10,6 +10,7 @@ mod cli;
 mod error;
 mod matcher;
 mod pipeline;
+mod privsep_run;
 mod run;
 mod shutdown;
 mod validate;
@@ -21,3 +22,9 @@ pub use pipeline::{process_packet, ProcessResult};
 pub use run::run;
 pub use shutdown::ShutdownSignal;
 pub use validate::validate_capture_msg;
+
+/// Entry points for the three-process privsep architecture.
+pub mod privsep {
+    /// Run the privsep daemon (capture + crypto workers + parent loop).
+    pub use crate::privsep_run::run;
+}
