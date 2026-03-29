@@ -80,6 +80,15 @@ pub struct DaemonSection {
     /// Whether to drop capabilities and privileges on startup.
     #[serde(default = "yes")]
     pub enable_sandbox: bool,
+    /// Whether to run in privilege-separated mode (three processes).
+    ///
+    /// When `true` the daemon forks a capture worker and a crypto
+    /// worker at startup and runs the main loop in the parent
+    /// process, receiving authenticated requests from the crypto
+    /// worker over a Unix socketpair. When `false` the daemon runs
+    /// as a single process (Phase 3/4 fallback mode).
+    #[serde(default = "yes")]
+    pub enable_privsep: bool,
     /// Whether to install a Landlock filesystem ruleset.
     ///
     /// Defaults to `false` in Phase 4 because the current
@@ -113,6 +122,7 @@ impl Default for DaemonSection {
             enable_systemd: true,
             log_level: default_log_level(),
             enable_sandbox: true,
+            enable_privsep: true,
             landlock_enabled: false,
         }
     }
@@ -439,5 +449,32 @@ master_key_base64 = "{}"
         // nftables-rs backend spawns nft as a subprocess. Phase 5
         // will re-enable it by default after privsep lands.
         assert!(!cfg.daemon.landlock_enabled);
+    }
+
+    #[test]
+    fn enable_privsep_defaults_to_true() {
+        let cfg: DaemonConfig = toml::from_str(&minimal_config_toml()).unwrap();
+        assert!(cfg.daemon.enable_privsep);
+    }
+
+    #[test]
+    fn enable_privsep_can_be_disabled_via_toml() {
+        let body = format!(
+            r#"
+[daemon]
+enable_privsep = false
+
+[replay]
+
+[[access]]
+name = "t"
+source = ["any"]
+open_ports = ["tcp/22"]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        assert!(!cfg.daemon.enable_privsep);
     }
 }
