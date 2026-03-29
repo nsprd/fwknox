@@ -41,10 +41,6 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     info!(config = %cli.config.display(), "loading daemon config");
     let config = load_daemon_config(&cli.config)?;
 
-    // Phase 4: apply the sandbox AFTER initialising the firewall and
-    // binding sockets (those need root/netlink) but BEFORE entering
-    // the main loop.
-
     // Step 1: firewall backend (needs CAP_NET_ADMIN).
     let mut firewall: Box<dyn FirewallBackend> = match config.daemon.firewall_backend {
         ConfigBackend::Nftables => Box::new(NftablesBackend::new()),
@@ -57,12 +53,11 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
         }
     };
 
-    // Step 2: capture socket (binds before sandbox so we don't need
-    // the CAP_NET_BIND_SERVICE capability after the drop).
+    // Step 2: bind the capture socket / UDP listener.
     let bind_addr: std::net::IpAddr = config.daemon.listen_addr;
     let listen_addr = std::net::SocketAddr::new(bind_addr, config.daemon.listen_port);
     info!(addr = %listen_addr, "binding capture socket");
-    let capture = UdpCapture::bind(listen_addr)?;
+    let udp_socket = std::net::UdpSocket::bind(listen_addr)?;
 
     // Step 3: replay cache.
     let replay = ReplayCache::load_from_file(&config.replay.cache_path)?;
@@ -71,14 +66,24 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     let shutdown = ShutdownSignal::new();
     shutdown.install_handlers()?;
 
-    // Step 5: sandbox.
+    // Step 5: sandbox (capability drop + privdrop; Landlock only
+    // activates if explicitly configured — see Phase 4 rationale).
     if config.daemon.enable_sandbox {
         apply_sandbox(&config)?;
     } else {
         info!("sandbox disabled in config");
     }
 
-    run(&config, &capture, firewall.as_mut(), &replay, &shutdown)
+    // Step 6: dispatch to privsep or single-process mode.
+    if config.daemon.enable_privsep {
+        info!("running in privsep mode");
+        fwknox_daemon::privsep::run(&config, udp_socket, firewall.as_mut(), &replay, &shutdown)
+    } else {
+        info!("running in single-process mode (privsep disabled in config)");
+        // Wrap udp_socket in a UdpCapture for the single-process run loop.
+        let capture = UdpCapture::from_socket(udp_socket);
+        run(&config, &capture, firewall.as_mut(), &replay, &shutdown)
+    }
 }
 
 fn apply_sandbox(config: &fwknox_config::DaemonConfig) -> Result<(), DaemonError> {
