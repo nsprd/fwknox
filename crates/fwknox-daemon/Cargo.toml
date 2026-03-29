@@ -8,8 +8,19 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-[lints]
-workspace = true
+[lints.rust]
+# privsep_run.rs requires unsafe { fork() }; override the workspace forbid.
+unsafe_code = "allow"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+duration_suboptimal_units = "allow"
 
 [dependencies]
 caps.workspace = true
@@ -17,7 +28,9 @@ clap.workspace = true
 fwknox-capture.workspace = true
 fwknox-config.workspace = true
 fwknox-firewall.workspace = true
+fwknox-privsep.workspace = true
 fwknox-proto.workspace = true
+nix.workspace = true
 fwknox-replay.workspace = true
 fwknox-sandbox.workspace = true
 signal-hook.workspace = true

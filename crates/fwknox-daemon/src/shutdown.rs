@@ -48,6 +48,13 @@ impl ShutdownSignal {
     pub fn trigger(&self) {
         self.flag.store(true, Ordering::SeqCst);
     }
+
+    /// Borrow the inner `Arc<AtomicBool>` so external signal-hook
+    /// registrations can flip the same flag.
+    #[must_use]
+    pub fn flag_arc(&self) -> &std::sync::Arc<std::sync::atomic::AtomicBool> {
+        &self.flag
+    }
 }
 
 #[cfg(test)]

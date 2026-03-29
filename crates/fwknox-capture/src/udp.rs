@@ -26,6 +26,17 @@ impl UdpCapture {
         Ok(Self { socket })
     }
 
+    /// Wrap an already-bound [`UdpSocket`] in a [`UdpCapture`].
+    ///
+    /// Used by the daemon binary when the privsep orchestrator and the
+    /// single-process run loop share the same bind step — the socket
+    /// is bound once up front, then handed to whichever entry point
+    /// the config dispatches to.
+    #[must_use]
+    pub fn from_socket(socket: UdpSocket) -> Self {
+        Self { socket }
+    }
+
     /// Borrow the underlying socket's local address (used by tests to
     /// inspect the bound port).
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
@@ -149,5 +160,13 @@ mod tests {
             .unwrap()
             .expect("packet should arrive");
         assert_eq!(pkt.data, b"hello timeout");
+    }
+
+    #[test]
+    fn from_socket_wraps_existing_socket() {
+        let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let original_addr = raw.local_addr().unwrap();
+        let cap = UdpCapture::from_socket(raw);
+        assert_eq!(cap.local_addr().unwrap(), original_addr);
     }
 }
