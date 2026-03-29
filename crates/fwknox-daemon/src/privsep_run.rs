@@ -198,12 +198,23 @@ fn run_parent_loop(
         .set_read_timeout(Some(PARENT_POLL_INTERVAL))
         .map_err(|e| DaemonError::from(PrivsepError::Io(e)))?;
 
+    // Install a SIGCHLD handler that flips our shutdown flag, so the
+    // parent fails closed when either worker dies. systemd's
+    // Restart=on-failure will bring us back fresh.
+    if let Err(e) = signal_hook::flag::register(
+        signal_hook::consts::SIGCHLD,
+        std::sync::Arc::clone(shutdown.flag_arc()),
+    ) {
+        warn!(error = %e, "failed to install SIGCHLD handler; dead workers will not be detected");
+    }
+
     if let Err(e) = fwknox_sandbox::notify::ready() {
         warn!(error = %e, "sd_notify(READY=1) failed");
     }
 
     info!("parent: entering main loop");
 
+    let mut tick: u64 = 0;
     while !shutdown.is_shutdown() {
         match recv_msg::<CryptoMsg>(parent_reader) {
             Ok(msg) => handle_crypto_msg(msg, config, replay, firewall),
@@ -211,20 +222,26 @@ fn run_parent_loop(
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                // Tick timeout: fall through to the shutdown check.
-            }
-            Err(PrivsepError::PeerClosed) => {
-                warn!("crypto worker closed socket; exiting parent loop");
-                break;
+                // Tick timeout: fall through to the shutdown / prune check.
             }
             Err(e) => {
                 warn!(error = %e, "recv from crypto worker failed");
             }
         }
         let _ = fwknox_sandbox::notify::watchdog();
+        tick = tick.wrapping_add(1);
+        if tick.is_multiple_of(crate::run::PRUNE_EVERY_TICKS) {
+            let pruned = replay.prune_older_than(config.replay.max_age);
+            if pruned > 0 {
+                debug!(pruned, "pruned expired replay cache entries");
+            }
+        }
     }
 
-    info!("parent: shutting down workers");
+    info!(
+        shutdown = shutdown.is_shutdown(),
+        "parent: shutting down workers"
+    );
     let _ = fwknox_sandbox::notify::stopping();
 
     if let Err(e) = capture_handle.terminate_and_wait() {

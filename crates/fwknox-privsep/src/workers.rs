@@ -128,10 +128,6 @@ where
                     return Err(e);
                 }
             }
-            Err(PrivsepError::PeerClosed) => {
-                info!("crypto worker: capture side closed, exiting");
-                return Ok(());
-            }
             Err(PrivsepError::Io(ref e))
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>

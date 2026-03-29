@@ -60,9 +60,39 @@ impl ForkedWorker {
     /// still try the waitpid.
     pub fn terminate_and_wait(&self) -> Result<WaitStatus, PrivsepError> {
         if let Err(e) = self.signal_terminate() {
-            warn!(worker = self.name, error = %e, "signal_terminate failed; trying waitpid anyway");
+            // ESRCH (worker already dead) is the common-case; log at debug.
+            if matches!(
+                e,
+                PrivsepError::Syscall {
+                    source: nix::errno::Errno::ESRCH,
+                    ..
+                }
+            ) {
+                debug!(worker = self.name, "worker already exited before signal");
+            } else {
+                warn!(worker = self.name, error = %e, "signal_terminate failed; trying waitpid anyway");
+            }
         }
         self.wait()
+    }
+}
+
+impl Drop for ForkedWorker {
+    fn drop(&mut self) {
+        // Best-effort cleanup: send SIGTERM (ignore ESRCH), then a
+        // non-blocking waitpid to reap the zombie. We deliberately
+        // don't block in Drop because that could deadlock the parent
+        // if a worker is wedged. The parent's normal shutdown path
+        // calls terminate_and_wait explicitly; this Drop only fires
+        // on error paths where we've already given up on graceful
+        // shutdown.
+        let _ = kill(self.pid, Signal::SIGTERM);
+        let _ = waitpid(self.pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG));
+        debug!(
+            worker = self.name,
+            pid = self.pid.as_raw(),
+            "ForkedWorker dropped"
+        );
     }
 }
 
