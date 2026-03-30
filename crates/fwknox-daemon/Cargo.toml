@@ -45,3 +45,7 @@ tempfile.workspace = true
 [[bin]]
 name = "fwknoxd"
 path = "src/bin/fwknoxd.rs"
+
+[[bin]]
+name = "fwknoxd-mock"
+path = "src/bin/fwknoxd-mock.rs"
