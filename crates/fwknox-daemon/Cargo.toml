@@ -40,6 +40,9 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 base64.workspace = true
+clap.workspace = true
+fwknox-client.workspace = true
+libc.workspace = true
 tempfile.workspace = true
 
 [[bin]]
