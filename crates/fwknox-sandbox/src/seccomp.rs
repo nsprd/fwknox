@@ -82,6 +82,8 @@ pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
         libc::SYS_mmap,
         libc::SYS_munmap,
         libc::SYS_mprotect,
+        libc::SYS_madvise,
+        libc::SYS_mremap,
         libc::SYS_futex,
         // Time
         libc::SYS_clock_gettime,
@@ -92,9 +94,16 @@ pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
         libc::SYS_rt_sigaction,
         libc::SYS_rt_sigprocmask,
         libc::SYS_rt_sigreturn,
+        libc::SYS_sigaltstack,
         libc::SYS_getpid,
         libc::SYS_gettid,
         libc::SYS_tgkill,
+        // Stdlib + signal-hook startup needs
+        libc::SYS_getrandom,
+        libc::SYS_prlimit64,
+        libc::SYS_rseq,
+        libc::SYS_set_robust_list,
+        libc::SYS_set_tid_address,
         // Exit paths
         libc::SYS_exit,
         libc::SYS_exit_group,
