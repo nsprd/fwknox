@@ -19,5 +19,5 @@ pub mod notify;
 pub mod privdrop;
 pub mod seccomp;
 
-pub use apply::{apply, LandlockConfig, PrivDropTarget, SandboxConfig};
+pub use apply::{apply, apply_worker_sandbox, LandlockConfig, PrivDropTarget, SandboxConfig};
 pub use error::SandboxError;
