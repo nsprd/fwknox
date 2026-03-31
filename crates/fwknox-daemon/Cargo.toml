@@ -40,8 +40,15 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 base64.workspace = true
+clap.workspace = true
+fwknox-client.workspace = true
+libc.workspace = true
 tempfile.workspace = true
 
 [[bin]]
 name = "fwknoxd"
 path = "src/bin/fwknoxd.rs"
+
+[[bin]]
+name = "fwknoxd-mock"
+path = "src/bin/fwknoxd-mock.rs"

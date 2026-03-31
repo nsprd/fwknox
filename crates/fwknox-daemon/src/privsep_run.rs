@@ -85,6 +85,14 @@ pub fn run(
                 eprintln!("capture worker: install_handlers failed: {e}");
                 std::process::exit(1);
             }
+            // Apply Landlock + seccomp sandbox AFTER signal handlers
+            // are in place but BEFORE entering the worker loop. From
+            // this point forward the worker has no filesystem access
+            // and only the syscalls in the worker_filter allowlist.
+            if let Err(e) = fwknox_sandbox::apply_worker_sandbox("capture") {
+                eprintln!("capture worker: apply_worker_sandbox failed: {e}");
+                std::process::exit(1);
+            }
             let result = run_capture_worker(&udp_socket, &capture_writer, || {
                 local_shutdown.is_shutdown()
             });
@@ -150,6 +158,19 @@ fn run_parent_after_capture_fork(
             let local_shutdown = ShutdownSignal::new();
             if let Err(e) = local_shutdown.install_handlers() {
                 eprintln!("crypto worker: install_handlers failed: {e}");
+                std::process::exit(1);
+            }
+            // Apply Landlock + seccomp sandbox AFTER signal handlers
+            // are in place but BEFORE entering the worker loop. The
+            // crypto worker is the most security-critical process in
+            // fwknox: it processes untrusted internet input from the
+            // capture worker, decrypts it, and only sends the result
+            // to the parent if it passes every validation step. Any
+            // bug in fwknox-proto's parser would otherwise be a
+            // remote attack surface; the sandbox makes that surface
+            // moot.
+            if let Err(e) = fwknox_sandbox::apply_worker_sandbox("crypto") {
+                eprintln!("crypto worker: apply_worker_sandbox failed: {e}");
                 std::process::exit(1);
             }
             let validate = move |msg| validate_capture_msg(msg, &crypto_config);

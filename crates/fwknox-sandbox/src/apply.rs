@@ -103,6 +103,50 @@ pub fn apply(config: &SandboxConfig) -> Result<(), SandboxError> {
     Ok(())
 }
 
+/// Apply the worker sandbox: Landlock with empty filesystem policy,
+/// then the worker seccomp filter.
+///
+/// This is the function the privsep orchestrator calls from inside
+/// each child process (capture and crypto workers) immediately after
+/// installing signal handlers and immediately before entering the
+/// worker's main loop.
+///
+/// The two layers are applied in this order because:
+///
+/// 1. Landlock is applied first because `landlock_create_ruleset` and
+///    `landlock_restrict_self` are themselves syscalls. If seccomp ran
+///    first without those syscalls in the allowlist, the Landlock
+///    setup would be killed by SIGSYS.
+/// 2. With Landlock done, the seccomp filter can omit the Landlock
+///    syscalls, giving a tighter allowlist.
+///
+/// Both layers are irrevocable per-thread. Any failure returns
+/// `SandboxError` and the caller is responsible for exiting the
+/// child process so it doesn't accidentally run unsandboxed.
+///
+/// `worker_name` is included in the log lines so each child's sandbox
+/// install is auditable in the parent's log stream.
+pub fn apply_worker_sandbox(worker_name: &'static str) -> Result<(), SandboxError> {
+    tracing::info!(
+        worker = worker_name,
+        "applying worker sandbox: Landlock first"
+    );
+    let policy = crate::landlock::FilesystemPolicy {
+        read_only: &[],
+        read_write: &[],
+    };
+    crate::landlock::apply(&policy)?;
+
+    tracing::info!(
+        worker = worker_name,
+        "applying worker sandbox: seccomp filter"
+    );
+    crate::seccomp::install_worker_filter()?;
+
+    tracing::info!(worker = worker_name, "worker sandbox applied successfully");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
