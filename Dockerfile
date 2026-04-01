@@ -8,12 +8,11 @@ FROM rustlang/rust:nightly-slim AS builder
 
 WORKDIR /src
 
-# Install build deps: pkg-config + libclang for any sys-crate bindgen + git
-# for build.rs scripts that shell out to git describe. Keep this minimal.
+# Install build deps: pkg-config is kept as a cheap insurance for any
+# future sys-crate; the workspace currently has no bindgen/libclang or
+# git-describing build.rs, so libclang-dev and git are not needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
-        libclang-dev \
-        git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy just the manifests first to maximise layer cache reuse. If only
