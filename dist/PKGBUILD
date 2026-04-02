@@ -15,7 +15,6 @@ depends=(
     'gcc-libs'
 )
 makedepends=(
-    'cargo'
     'rustup'
     'git'
 )
@@ -26,19 +25,26 @@ sha256sums=('SKIP')
 
 prepare() {
     cd "$pkgname-$pkgver"
-    # Ensure the nightly toolchain rust-toolchain.toml pins is installed.
-    rustup toolchain install nightly --profile minimal \
-        --component rustfmt clippy rust-src
+    # rust-toolchain.toml pins nightly; install it here so cargo picks
+    # it up automatically on first invocation. The file also lists the
+    # required components (rustfmt, clippy, rust-src) — rustup will fetch
+    # them on demand, so we don't need to duplicate them here.
+    rustup toolchain install nightly --profile minimal
 }
 
 build() {
     cd "$pkgname-$pkgver"
+    # Make sure rustup's proxies are on PATH regardless of how rustup
+    # was installed (pacman puts them in /usr/bin; upstream installer
+    # puts them in ~/.cargo/bin).
+    export PATH="$HOME/.cargo/bin:$PATH"
     export CARGO_TARGET_DIR="$srcdir/target"
     cargo build --release --workspace --bins
 }
 
 check() {
     cd "$pkgname-$pkgver"
+    export PATH="$HOME/.cargo/bin:$PATH"
     export CARGO_TARGET_DIR="$srcdir/target"
     cargo test --release --workspace
 }
