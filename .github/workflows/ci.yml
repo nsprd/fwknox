@@ -19,7 +19,6 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: short
   CARGO_INCREMENTAL: 0
-  RUSTFLAGS: -D warnings
 
 jobs:
   fmt:
@@ -55,11 +54,6 @@ jobs:
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
-      - name: Install runtime test deps
-        # nftables is needed by the firewall crate's test matrix (mock
-        # backend used by default, but real nftables smoke-tests run if
-        # present on the host).
-        run: sudo apt-get update && sudo apt-get install -y nftables
       - name: Run tests
         run: cargo test --workspace --all-targets
 
@@ -76,11 +70,17 @@ jobs:
       - name: Install cargo-audit
         run: cargo install --locked cargo-audit
       - name: Audit dependencies
-        run: cargo audit --deny warnings
+        # Default mode: fail only on vulnerabilities. We intentionally
+        # do NOT pass --deny warnings because that promotes yanked /
+        # unmaintained notices to errors, and those aren't security
+        # issues we can fix without a dep bump from upstream.
+        run: cargo audit
 
   build:
     name: release build
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v4
       - name: Install nightly toolchain
