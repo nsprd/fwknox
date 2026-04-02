@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Local development / smoke-test compose file for fwknoxd.
+#
+# Usage:
+#   cp config/fwknoxd.toml.example config/fwknoxd.toml
+#   # edit master_key_base64 in config/fwknoxd.toml
+#   docker compose up --build
+#
+# The daemon runs on the host network so it can drive the host's nftables
+# and see real SPA packets on the host's interfaces. This requires root
+# on the host.
+
+services:
+  fwknoxd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fwknox:local
+    container_name: fwknoxd
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    # We do NOT add NET_RAW — the UDP capture backend doesn't need raw
+    # sockets. The pcap backend would, but we ship with capture_mode=udp
+    # in the example config.
+    volumes:
+      - ./config/fwknoxd.toml:/etc/fwknox/fwknoxd.toml:ro
+      - fwknox-state:/var/lib/fwknox
+      - fwknox-runtime:/run/fwknox
+    # Journald is the easiest place to read logs during smoke tests.
+    logging:
+      driver: journald
+      options:
+        tag: fwknoxd
+
+volumes:
+  fwknox-state:
+  fwknox-runtime:

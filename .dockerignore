@@ -1,0 +1,33 @@
+# Rust build artifacts — recreated fresh inside the builder stage.
+target/
+**/target/
+
+# Git internals and history.
+.git/
+.gitignore
+.gitmodules
+.gitattributes
+
+# Reference material — not needed at runtime.
+ref/
+
+# Editor/IDE state.
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# CI/CD and local tooling.
+.github/
+dist/PKGBUILD
+
+# Docs — not shipped in the image.
+docs/
+README.md
+LICENSE.tmp
+
+# Our own Docker files (no inception).
+Dockerfile
+.dockerignore
+docker-compose.yml

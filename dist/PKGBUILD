@@ -1,0 +1,71 @@
+# Maintainer: fwknox maintainers <noreply@fwknox.invalid>
+# Contributor: fwknox maintainers <noreply@fwknox.invalid>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+pkgname=fwknox
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Single Packet Authorization firewall daemon — Rust port of fwknop"
+arch=('x86_64')
+url="https://github.com/nsprd/fwknox"
+license=('AGPL3')
+depends=(
+    'nftables'
+    'gcc-libs'
+)
+makedepends=(
+    'rustup'
+    'git'
+)
+backup=('etc/fwknox/fwknoxd.toml')
+options=('!lto')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/nsprd/fwknox/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "$pkgname-$pkgver"
+    # rust-toolchain.toml pins nightly; install it here so cargo picks
+    # it up automatically on first invocation. The file also lists the
+    # required components (rustfmt, clippy, rust-src) — rustup will fetch
+    # them on demand, so we don't need to duplicate them here.
+    rustup toolchain install nightly --profile minimal
+}
+
+build() {
+    cd "$pkgname-$pkgver"
+    # Make sure rustup's proxies are on PATH regardless of how rustup
+    # was installed (pacman puts them in /usr/bin; upstream installer
+    # puts them in ~/.cargo/bin).
+    export PATH="$HOME/.cargo/bin:$PATH"
+    export CARGO_TARGET_DIR="$srcdir/target"
+    cargo build --release --workspace --bins
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    export PATH="$HOME/.cargo/bin:$PATH"
+    export CARGO_TARGET_DIR="$srcdir/target"
+    cargo test --release --workspace
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    local tgt="$srcdir/target/release"
+
+    # Binaries
+    install -Dm755 "$tgt/fwknox"  "$pkgdir/usr/bin/fwknox"
+    install -Dm755 "$tgt/fwknoxd" "$pkgdir/usr/bin/fwknoxd"
+
+    # Config — example shipped as the real config; operator edits in place.
+    install -Dm640 "config/fwknoxd.toml.example" \
+        "$pkgdir/etc/fwknox/fwknoxd.toml"
+
+    # systemd unit
+    install -Dm644 "dist/fwknoxd.service" \
+        "$pkgdir/usr/lib/systemd/system/fwknoxd.service"
+
+    # License
+    install -Dm644 "LICENSE" \
+        "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -13,6 +13,7 @@ use crate::{
 
 /// Top-level structure of `fwknoxd.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DaemonConfig {
     /// `[daemon]` section.
     #[serde(default)]
@@ -27,6 +28,7 @@ pub struct DaemonConfig {
 
 /// The `[daemon]` section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct DaemonSection {
     /// IP address the daemon binds to.
@@ -130,6 +132,7 @@ impl Default for DaemonSection {
 
 /// The `[replay]` section: replay-detection cache configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReplaySection {
     /// Path to the persistent replay-detection cache file.
     #[serde(default = "default_replay_path")]
@@ -150,6 +153,7 @@ impl Default for ReplaySection {
 
 /// One `[[access]]` stanza, defining a key + the policy that key authorizes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AccessStanza {
     /// Human-readable name for this stanza (must be unique within the config).
     pub name: String,
