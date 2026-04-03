@@ -15,7 +15,10 @@
 //! syscall set). For now both workers use the same filter because the
 //! UDP capture path and the crypto path share the same syscall
 //! requirements: recv, send, read, write, futex, brk, mmap, clock,
-//! and exit.
+//!   and exit. The list forks minimally on `x86_64` vs aarch64 because
+//!   the legacy `poll` / `epoll_wait` / `gettimeofday` syscalls only
+//!   exist on `x86_64` — aarch64 uses `ppoll` / `epoll_pwait` /
+//!   `clock_gettime` instead.
 
 use std::collections::BTreeMap;
 
@@ -55,9 +58,9 @@ const TARGET_ARCH: TargetArch = TargetArch::aarch64;
 ///
 /// Everything else triggers `SeccompAction::KillProcess`.
 pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
-    // Allow list: each syscall maps to an empty rule vec, which means
-    // "allow with any arguments".
-    let rules: BTreeMap<i64, Vec<SeccompRule>> = [
+    // Syscalls that exist on both x86_64 and aarch64 Linux ABIs.
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
+    let mut syscalls: Vec<i64> = vec![
         // I/O
         libc::SYS_read,
         libc::SYS_write,
@@ -66,14 +69,12 @@ pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
         libc::SYS_recvmsg,
         libc::SYS_sendmsg,
         libc::SYS_close,
-        // fcntl is needed to set socket read timeouts via setsockopt
         libc::SYS_fcntl,
         libc::SYS_setsockopt,
         libc::SYS_getsockopt,
-        // Poll/timeout plumbing
-        libc::SYS_poll,
+        // Poll/timeout plumbing (ppoll + epoll_pwait are the
+        // aarch64-compatible variants; x86_64 stdlib calls them too).
         libc::SYS_ppoll,
-        libc::SYS_epoll_wait,
         libc::SYS_epoll_pwait,
         libc::SYS_epoll_ctl,
         libc::SYS_epoll_create1,
@@ -89,7 +90,6 @@ pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
         libc::SYS_clock_gettime,
         libc::SYS_clock_nanosleep,
         libc::SYS_nanosleep,
-        libc::SYS_gettimeofday,
         // Signal handling + process identity
         libc::SYS_rt_sigaction,
         libc::SYS_rt_sigprocmask,
@@ -104,13 +104,31 @@ pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
         libc::SYS_rseq,
         libc::SYS_set_robust_list,
         libc::SYS_set_tid_address,
+        // Signal restart path — kernel issues this when returning
+        // from a signal handler that interrupted a blocking syscall
+        // (e.g. recvfrom with a read timeout). Missing this causes
+        // rare SIGSYS kills on shutdown.
+        libc::SYS_restart_syscall,
         // Exit paths
         libc::SYS_exit,
         libc::SYS_exit_group,
-    ]
-    .into_iter()
-    .map(|syscall_number| (syscall_number, Vec::new()))
-    .collect();
+    ];
+
+    // x86_64 ships legacy poll/epoll_wait/gettimeofday as distinct
+    // syscall numbers; aarch64 removed them in favor of ppoll /
+    // epoll_pwait / clock_gettime. Gate them so the file compiles
+    // on both architectures.
+    #[cfg(target_arch = "x86_64")]
+    {
+        syscalls.push(libc::SYS_poll);
+        syscalls.push(libc::SYS_epoll_wait);
+        syscalls.push(libc::SYS_gettimeofday);
+    }
+
+    let rules: BTreeMap<i64, Vec<SeccompRule>> = syscalls
+        .into_iter()
+        .map(|syscall_number| (syscall_number, Vec::new()))
+        .collect();
 
     let filter = SeccompFilter::new(
         rules,
