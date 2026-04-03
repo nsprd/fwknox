@@ -77,8 +77,7 @@ fn nobody_group_name() -> &'static str {
     if std::process::Command::new("getent")
         .args(["group", "nogroup"])
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
     {
         "nogroup"
     } else {
