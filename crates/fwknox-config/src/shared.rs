@@ -124,6 +124,13 @@ impl Base64Key {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
+
+    /// Returns `true` if every byte of the key is zero. Used by
+    /// `DaemonConfig::validate` to reject the example placeholder.
+    #[must_use]
+    pub fn is_all_zero(&self) -> bool {
+        self.0.iter().all(|&b| b == 0)
+    }
 }
 
 impl core::fmt::Debug for Base64Key {

@@ -249,6 +249,34 @@ impl DaemonConfig {
                     stanza.name
                 )));
             }
+            if stanza.master_key_base64.is_all_zero() {
+                return Err(ConfigError::invalid(format!(
+                    "access stanza {:?} uses the all-zero example placeholder key; \
+                     generate a real one with `head -c 32 /dev/urandom | base64`",
+                    stanza.name
+                )));
+            }
+            if stanza.expiration_date.is_some() {
+                return Err(ConfigError::invalid(format!(
+                    "access stanza {:?} sets expiration_date, which is not yet \
+                     implemented — remove the field or wait for a future release",
+                    stanza.name
+                )));
+            }
+            if stanza.enable_nat {
+                return Err(ConfigError::invalid(format!(
+                    "access stanza {:?} sets enable_nat, which is not yet \
+                     implemented — remove the field or wait for a future release",
+                    stanza.name
+                )));
+            }
+            if stanza.enable_cmd_exec {
+                return Err(ConfigError::invalid(format!(
+                    "access stanza {:?} sets enable_cmd_exec, which is not yet \
+                     implemented — remove the field or wait for a future release",
+                    stanza.name
+                )));
+            }
         }
         if self.daemon.default_fw_timeout > self.daemon.max_fw_timeout {
             return Err(ConfigError::invalid(
