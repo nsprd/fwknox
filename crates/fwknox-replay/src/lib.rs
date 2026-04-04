@@ -8,5 +8,5 @@ mod cache;
 mod error;
 mod persist;
 
-pub use cache::{Nonce, ReplayCache};
+pub use cache::{Nonce, ReplayCache, DEFAULT_MAX_ENTRIES};
 pub use error::ReplayError;

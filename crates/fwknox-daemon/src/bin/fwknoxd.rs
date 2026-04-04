@@ -65,7 +65,15 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     let udp_socket = std::net::UdpSocket::bind(listen_addr)?;
 
     // Step 3: replay cache.
-    let replay = ReplayCache::load_from_file(&config.replay.cache_path)?;
+    let cap = std::num::NonZeroUsize::new(config.replay.max_entries)
+        .unwrap_or_else(|| std::num::NonZeroUsize::new(1).expect("1 > 0"));
+    let mut replay = if config.replay.cache_path.exists() {
+        ReplayCache::load_from_file(&config.replay.cache_path)?
+    } else {
+        ReplayCache::with_capacity(cap)
+    };
+    replay.set_persist_path(config.replay.cache_path.clone());
+    let replay = replay; // freeze into an immutable binding for the rest of the run
 
     // Step 4: signal handlers.
     let shutdown = ShutdownSignal::new();

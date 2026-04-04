@@ -120,6 +120,12 @@ pub struct ReplaySection {
     /// Maximum age of cache entries before they are pruned.
     #[serde(default = "default_replay_max_age", with = "humantime_serde")]
     pub max_age: Duration,
+    /// Maximum number of in-memory entries. When the cache is full,
+    /// the least-recently-used entry is evicted to make room for a
+    /// new nonce. This bounds the memory footprint against adversarial
+    /// packet floods.
+    #[serde(default = "default_replay_max_entries")]
+    pub max_entries: usize,
 }
 
 impl Default for ReplaySection {
@@ -127,6 +133,7 @@ impl Default for ReplaySection {
         Self {
             cache_path: default_replay_path(),
             max_age: default_replay_max_age(),
+            max_entries: default_replay_max_entries(),
         }
     }
 }
@@ -216,6 +223,9 @@ fn default_replay_path() -> PathBuf {
 #[allow(clippy::duration_suboptimal_units)]
 fn default_replay_max_age() -> Duration {
     Duration::from_secs(86_400)
+}
+fn default_replay_max_entries() -> usize {
+    10_000
 }
 fn yes() -> bool {
     true
