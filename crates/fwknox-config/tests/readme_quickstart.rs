@@ -6,6 +6,8 @@
 
 use std::path::PathBuf;
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
 /// Extract the first fenced code block between the "```toml" and "```"
 /// markers that comes after the string "fwknox.toml" in the README.
 /// Panics if the marker can't be found — that's what we want: if
@@ -43,7 +45,6 @@ fn readme_client_toml_parses_against_real_schema() {
     // The README example uses a placeholder "<same key as server>" that
     // is not valid base64. Replace it with 32 bytes of 0x11 base64-encoded
     // so the parser can validate the rest of the schema.
-    use base64::{engine::general_purpose::STANDARD as B64, Engine};
     let real_key = B64.encode([0x11u8; 32]);
     toml_body = toml_body.replace(
         "\"<same key as server>\"",
