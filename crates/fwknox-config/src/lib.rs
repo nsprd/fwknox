@@ -17,7 +17,7 @@ mod shared;
 
 pub use client::{ClientConfig, ClientTransport, DefaultsSection, ServerEntry};
 pub use daemon::{
-    AccessStanza, CaptureMode, DaemonConfig, DaemonSection, FirewallBackend, ReplaySection,
+    AccessStanza, DaemonConfig, DaemonSection, FirewallBackend, ReplaySection,
 };
 pub use error::ConfigError;
 pub use load::{load_client_config, load_daemon_config};

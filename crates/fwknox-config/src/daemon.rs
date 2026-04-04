@@ -37,21 +37,9 @@ pub struct DaemonSection {
     /// UDP/TCP port the daemon listens on.
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
-    /// Packet capture backend (UDP listener vs libpcap sniffer).
-    #[serde(default = "default_capture_mode")]
-    pub capture_mode: CaptureMode,
-    /// Network interface for pcap mode.
-    #[serde(default)]
-    pub pcap_interface: Option<String>,
-    /// Berkeley packet filter expression for pcap mode.
-    #[serde(default = "default_pcap_filter")]
-    pub pcap_filter: String,
     /// Firewall backend used for opening rules.
     #[serde(default = "default_firewall_backend")]
     pub firewall_backend: FirewallBackend,
-    /// Path to the daemon's PID file.
-    #[serde(default = "default_pid_file")]
-    pub pid_file: PathBuf,
     /// Unix user the daemon drops privileges to.
     #[serde(default = "default_run_user")]
     pub run_user: String,
@@ -76,9 +64,6 @@ pub struct DaemonSection {
     /// Whether to send `sd_notify(READY=1)` and watchdog heartbeats.
     #[serde(default = "yes")]
     pub enable_systemd: bool,
-    /// Log level: error/warn/info/debug/trace.
-    #[serde(default = "default_log_level")]
-    pub log_level: String,
     /// Whether to drop capabilities and privileges on startup.
     #[serde(default = "yes")]
     pub enable_sandbox: bool,
@@ -109,11 +94,7 @@ impl Default for DaemonSection {
         Self {
             listen_addr: default_listen_addr(),
             listen_port: default_listen_port(),
-            capture_mode: default_capture_mode(),
-            pcap_interface: None,
-            pcap_filter: default_pcap_filter(),
             firewall_backend: default_firewall_backend(),
-            pid_file: default_pid_file(),
             run_user: default_run_user(),
             run_group: default_run_group(),
             max_spa_packet_age: default_max_age(),
@@ -122,7 +103,6 @@ impl Default for DaemonSection {
             default_fw_timeout: default_fw_timeout(),
             max_fw_timeout: default_max_fw_timeout(),
             enable_systemd: true,
-            log_level: default_log_level(),
             enable_sandbox: true,
             enable_privsep: true,
             landlock_enabled: false,
@@ -194,16 +174,6 @@ pub struct AccessStanza {
     pub expiration_date: Option<String>,
 }
 
-/// Packet capture mode used by the daemon.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CaptureMode {
-    /// Plain UDP listener (no special privileges).
-    Udp,
-    /// libpcap-based packet sniffer (requires `CAP_NET_RAW`).
-    Pcap,
-}
-
 /// Firewall backend used by the daemon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -220,17 +190,8 @@ fn default_listen_addr() -> IpAddr {
 fn default_listen_port() -> u16 {
     62201
 }
-fn default_capture_mode() -> CaptureMode {
-    CaptureMode::Udp
-}
-fn default_pcap_filter() -> String {
-    "udp port 62201".into()
-}
 fn default_firewall_backend() -> FirewallBackend {
     FirewallBackend::Nftables
-}
-fn default_pid_file() -> PathBuf {
-    PathBuf::from("/run/fwknox/fwknoxd.pid")
 }
 fn default_run_user() -> String {
     "fwknox".into()
@@ -248,9 +209,6 @@ fn default_fw_timeout() -> Duration {
 #[allow(clippy::duration_suboptimal_units)]
 fn default_max_fw_timeout() -> Duration {
     Duration::from_secs(300)
-}
-fn default_log_level() -> String {
-    "info".into()
 }
 fn default_replay_path() -> PathBuf {
     PathBuf::from("/var/lib/fwknox/replay.cache")

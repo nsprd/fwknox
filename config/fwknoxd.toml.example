@@ -14,9 +14,7 @@
 [daemon]
 listen_addr         = "0.0.0.0"
 listen_port         = 62201
-capture_mode        = "udp"
 firewall_backend    = "nftables"
-pid_file            = "/run/fwknox/fwknoxd.pid"
 run_user            = "fwknox"
 run_group           = "fwknox"
 max_spa_packet_age  = "120s"
@@ -25,7 +23,6 @@ flush_rules_at_exit = true
 default_fw_timeout  = "30s"
 max_fw_timeout      = "5m"
 enable_systemd      = true
-log_level           = "info"
 enable_sandbox      = true
 landlock_enabled    = false
 enable_privsep      = true

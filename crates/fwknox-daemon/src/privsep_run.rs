@@ -59,6 +59,14 @@ pub fn run(
         "fwknox daemon starting in privsep mode"
     );
 
+    // Flush BEFORE init so any stale table from a previous (crashed)
+    // run is cleared, then we install our fresh ruleset. Calling flush
+    // after init would tear down the table we just created.
+    if config.daemon.flush_rules_at_init {
+        if let Err(e) = firewall.flush() {
+            warn!(error = %e, "firewall flush at init failed; continuing");
+        }
+    }
     firewall.init()?;
 
     // Create the two socketpairs BEFORE fork so every process inherits
@@ -229,8 +237,10 @@ fn run_parent_loop(
         warn!(error = %e, "failed to install SIGCHLD handler; dead workers will not be detected");
     }
 
-    if let Err(e) = fwknox_sandbox::notify::ready() {
-        warn!(error = %e, "sd_notify(READY=1) failed");
+    if config.daemon.enable_systemd {
+        if let Err(e) = fwknox_sandbox::notify::ready() {
+            warn!(error = %e, "sd_notify(READY=1) failed");
+        }
     }
 
     info!("parent: entering main loop");
@@ -249,7 +259,9 @@ fn run_parent_loop(
                 warn!(error = %e, "recv from crypto worker failed");
             }
         }
-        let _ = fwknox_sandbox::notify::watchdog();
+        if config.daemon.enable_systemd {
+            let _ = fwknox_sandbox::notify::watchdog();
+        }
         tick = tick.wrapping_add(1);
         if tick.is_multiple_of(crate::run::PRUNE_EVERY_TICKS) {
             let pruned = replay.prune_older_than(config.replay.max_age);
@@ -263,7 +275,9 @@ fn run_parent_loop(
         shutdown = shutdown.is_shutdown(),
         "parent: shutting down workers"
     );
-    let _ = fwknox_sandbox::notify::stopping();
+    if config.daemon.enable_systemd {
+        let _ = fwknox_sandbox::notify::stopping();
+    }
 
     if let Err(e) = capture_handle.terminate_and_wait() {
         warn!(error = %e, "capture worker reap failed");
@@ -272,8 +286,10 @@ fn run_parent_loop(
         warn!(error = %e, "crypto worker reap failed");
     }
 
-    if let Err(e) = firewall.flush() {
-        error!(error = %e, "firewall flush failed during shutdown");
+    if config.daemon.flush_rules_at_exit {
+        if let Err(e) = firewall.flush() {
+            error!(error = %e, "firewall flush failed during shutdown");
+        }
     }
     if let Err(e) = replay.save_to_file(&config.replay.cache_path) {
         warn!(error = %e, "replay cache save failed during shutdown");
