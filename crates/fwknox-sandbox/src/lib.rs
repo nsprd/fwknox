@@ -16,8 +16,10 @@ pub mod capabilities;
 mod error;
 pub mod landlock;
 pub mod notify;
+pub mod panic;
 pub mod privdrop;
 pub mod seccomp;
 
 pub use apply::{apply, apply_worker_sandbox, LandlockConfig, PrivDropTarget, SandboxConfig};
 pub use error::SandboxError;
+pub use panic::install_worker_panic_hook;

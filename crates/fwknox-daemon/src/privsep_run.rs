@@ -97,6 +97,7 @@ pub fn run(
             // are in place but BEFORE entering the worker loop. From
             // this point forward the worker has no filesystem access
             // and only the syscalls in the worker_filter allowlist.
+            fwknox_sandbox::install_worker_panic_hook("capture");
             if let Err(e) = fwknox_sandbox::apply_worker_sandbox("capture") {
                 eprintln!("capture worker: apply_worker_sandbox failed: {e}");
                 std::process::exit(1);
@@ -177,6 +178,7 @@ fn run_parent_after_capture_fork(
             // bug in fwknox-proto's parser would otherwise be a
             // remote attack surface; the sandbox makes that surface
             // moot.
+            fwknox_sandbox::install_worker_panic_hook("crypto");
             if let Err(e) = fwknox_sandbox::apply_worker_sandbox("crypto") {
                 eprintln!("crypto worker: apply_worker_sandbox failed: {e}");
                 std::process::exit(1);
