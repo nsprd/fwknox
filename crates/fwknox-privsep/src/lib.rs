@@ -9,7 +9,7 @@ mod messages;
 mod workers;
 
 pub use error::PrivsepError;
-pub use fork::{make_socketpair, ForkedWorker};
+pub use fork::{make_socketpair, try_reap_any_child, ForkedWorker};
 pub use ipc::{recv_msg, send_msg, MAX_IPC_MSG};
 pub use messages::{CaptureMsg, CryptoMsg};
 pub use workers::{run_capture_worker, run_crypto_worker};

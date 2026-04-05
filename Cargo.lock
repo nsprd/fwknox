@@ -325,6 +325,7 @@ name = "fwknox-privsep"
 version = "0.1.0"
 dependencies = [
  "fwknox-proto",
+ "libc",
  "nix",
  "rmp-serde",
  "serde",

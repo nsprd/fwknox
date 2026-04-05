@@ -71,8 +71,11 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     replay.set_persist_path(config.replay.cache_path.clone());
     let replay = replay; // freeze into an immutable binding for the rest of the run
 
+    // Create the shutdown signal, but DO NOT install handlers yet — we
+    // install them in the parent AFTER fork so the children don't
+    // inherit a stale handler pointing at a cloned Arc that no longer
+    // backs anything live.
     let shutdown = ShutdownSignal::new();
-    shutdown.install_handlers()?;
 
     // We deliberately do NOT call apply_sandbox here, because the
     // fwknoxd-mock binary is used in tests where we don't want to
@@ -87,6 +90,7 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     } else {
         info!("running in single-process mode (mock backend)");
         let capture = UdpCapture::from_socket(udp_socket);
+        shutdown.install_handlers()?;
         run(&config, &capture, firewall.as_mut(), &replay, &shutdown)
     }
 }

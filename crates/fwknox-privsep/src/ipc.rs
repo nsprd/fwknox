@@ -35,15 +35,46 @@ pub fn send_msg<M: Serialize>(socket: &UnixDatagram, msg: &M) -> Result<(), Priv
     Ok(())
 }
 
-/// Receive a single `MessagePack`-encoded datagram.
+/// Receive a single `MessagePack`-encoded datagram, detecting
+/// truncation via `MSG_TRUNC`.
 ///
-/// Returns [`PrivsepError::PeerClosed`] if the recv returns 0 bytes
-/// (the peer closed the socket), [`PrivsepError::IpcDecode`] if
-/// `MessagePack` fails to parse the payload, or [`PrivsepError::Io`]
-/// for transient I/O errors.
+/// Returns [`PrivsepError::IpcDecode`] if `MessagePack` fails to parse
+/// the payload, [`PrivsepError::Io`] for transient I/O errors, or
+/// [`PrivsepError::IpcTruncated`] if the kernel reports that the
+/// datagram was larger than our receive buffer (the sender sent a
+/// message larger than `MAX_IPC_MSG`, which the sender should have
+/// rejected before sending).
 pub fn recv_msg<M: DeserializeOwned>(socket: &UnixDatagram) -> Result<M, PrivsepError> {
+    use std::os::fd::AsRawFd as _;
+
     let mut buf = [0u8; MAX_IPC_MSG];
-    let len = socket.recv(&mut buf)?;
+    let mut iov = libc::iovec {
+        iov_base: buf.as_mut_ptr().cast::<libc::c_void>(),
+        iov_len: buf.len(),
+    };
+    // Safety: zero-initialize msghdr; msg_name/msg_control are unused.
+    let mut msg: libc::msghdr = unsafe { std::mem::zeroed() };
+    msg.msg_iov = &raw mut iov;
+    msg.msg_iovlen = 1;
+
+    let fd = socket.as_raw_fd();
+    // Safety: fd is valid and owned by `socket`; msg points at stack-
+    // allocated buffers we own; libc::recvmsg is safe to call.
+    let n = unsafe { libc::recvmsg(fd, &raw mut msg, libc::MSG_TRUNC) };
+    if n < 0 {
+        return Err(PrivsepError::Io(std::io::Error::last_os_error()));
+    }
+    #[allow(clippy::cast_sign_loss)]
+    let len = n as usize;
+    if (msg.msg_flags & libc::MSG_TRUNC) != 0 {
+        return Err(PrivsepError::IpcTruncated {
+            reported: len,
+            limit: MAX_IPC_MSG,
+        });
+    }
+    // A zero-length recv on SOCK_DGRAM should not happen in practice
+    // (Linux does not deliver it on peer close), but handle it
+    // defensively as PeerClosed.
     if len == 0 {
         return Err(PrivsepError::PeerClosed);
     }
@@ -116,6 +147,27 @@ mod tests {
         };
         let err = send_msg(&a, &huge).unwrap_err();
         assert!(matches!(err, PrivsepError::IpcEncode(_)));
+    }
+
+    #[test]
+    fn oversized_datagram_is_detected_as_truncated() {
+        // Bypass send_msg (which rejects oversized messages) and
+        // write directly to the socket so the kernel delivers a
+        // datagram larger than MAX_IPC_MSG. The receiver should
+        // report IpcTruncated.
+        let (a, b) = pair();
+        b.set_read_timeout(Some(std::time::Duration::from_millis(500)))
+            .unwrap();
+        let huge = vec![0u8; MAX_IPC_MSG + 1024];
+        a.send(&huge).unwrap();
+        let result: Result<CaptureMsg, _> = recv_msg(&b);
+        match result {
+            Err(PrivsepError::IpcTruncated { reported, limit }) => {
+                assert_eq!(limit, MAX_IPC_MSG);
+                assert!(reported >= MAX_IPC_MSG);
+            }
+            other => panic!("expected IpcTruncated, got {other:?}"),
+        }
     }
 
     #[test]

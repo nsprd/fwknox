@@ -75,9 +75,11 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     replay.set_persist_path(config.replay.cache_path.clone());
     let replay = replay; // freeze into an immutable binding for the rest of the run
 
-    // Step 4: signal handlers.
+    // Step 4: create the shutdown signal, but DO NOT install handlers
+    // yet — we install them in the parent AFTER fork so the children
+    // don't inherit a stale handler pointing at a cloned Arc that no
+    // longer backs anything live.
     let shutdown = ShutdownSignal::new();
-    shutdown.install_handlers()?;
 
     // Step 5: sandbox (capability drop + privdrop; Landlock only
     // activates if explicitly configured — see Phase 4 rationale).
@@ -95,6 +97,7 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
         info!("running in single-process mode (privsep disabled in config)");
         // Wrap udp_socket in a UdpCapture for the single-process run loop.
         let capture = UdpCapture::from_socket(udp_socket);
+        shutdown.install_handlers()?;
         run(&config, &capture, firewall.as_mut(), &replay, &shutdown)
     }
 }

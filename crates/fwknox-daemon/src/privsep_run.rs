@@ -225,6 +225,16 @@ fn run_parent_loop(
     capture_handle: &ForkedWorker,
     crypto_handle: &ForkedWorker,
 ) -> Result<(), DaemonError> {
+    // Install parent-side signal handlers now that the forks are done.
+    // The children each installed their own ShutdownSignal + handlers
+    // inside their fork branches, so the parent's handlers are
+    // independent of theirs. Deferring installation until here avoids
+    // the children inheriting a handler that references a cloned Arc
+    // pointing at dead parent state.
+    shutdown
+        .install_handlers()
+        .map_err(DaemonError::from)?;
+
     parent_reader
         .set_read_timeout(Some(PARENT_POLL_INTERVAL))
         .map_err(|e| DaemonError::from(PrivsepError::Io(e)))?;
@@ -265,6 +275,23 @@ fn run_parent_loop(
             let _ = fwknox_sandbox::notify::watchdog();
         }
         tick = tick.wrapping_add(1);
+        // Eager reap: if SIGCHLD has fired (which also flipped the
+        // shutdown flag via the handler registered below), snapshot
+        // which child died so we can log it before the shutdown path
+        // tries to terminate_and_wait on a pid that's already reaped.
+        match fwknox_privsep::try_reap_any_child() {
+            Ok(Some(pid)) => {
+                warn!(
+                    pid = pid.as_raw(),
+                    "parent: worker exited; initiating shutdown"
+                );
+                shutdown.trigger();
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(error = %e, "parent: waitpid(WNOHANG) failed");
+            }
+        }
         if tick.is_multiple_of(crate::run::PRUNE_EVERY_TICKS) {
             let pruned = replay.prune_older_than(config.replay.max_age);
             if pruned > 0 {
