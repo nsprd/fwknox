@@ -57,7 +57,10 @@ nat_destination = "10.0.0.5:22""#,
         [0x11; 32],
     );
     let err = load(&body).expect_err("enable_nat must be rejected as unimplemented");
-    assert!(err.to_string().contains("enable_nat"), "unexpected error: {err}");
+    assert!(
+        err.to_string().contains("enable_nat"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

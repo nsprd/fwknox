@@ -231,9 +231,7 @@ fn run_parent_loop(
     // independent of theirs. Deferring installation until here avoids
     // the children inheriting a handler that references a cloned Arc
     // pointing at dead parent state.
-    shutdown
-        .install_handlers()
-        .map_err(DaemonError::from)?;
+    shutdown.install_handlers().map_err(DaemonError::from)?;
 
     parent_reader
         .set_read_timeout(Some(PARENT_POLL_INTERVAL))

@@ -46,10 +46,7 @@ fn readme_client_toml_parses_against_real_schema() {
     // is not valid base64. Replace it with 32 bytes of 0x11 base64-encoded
     // so the parser can validate the rest of the schema.
     let real_key = B64.encode([0x11u8; 32]);
-    toml_body = toml_body.replace(
-        "\"<same key as server>\"",
-        &format!("\"{real_key}\""),
-    );
+    toml_body = toml_body.replace("\"<same key as server>\"", &format!("\"{real_key}\""));
 
     let cfg: fwknox_config::ClientConfig =
         toml::from_str(&toml_body).expect("README client TOML must parse");
@@ -57,7 +54,11 @@ fn readme_client_toml_parses_against_real_schema() {
 
     // Verify the example has the expected shape so reviewers notice
     // if somebody trims the example to something trivial.
-    assert_eq!(cfg.servers.len(), 1, "README example should have one server");
+    assert_eq!(
+        cfg.servers.len(),
+        1,
+        "README example should have one server"
+    );
     let server = &cfg.servers[0];
     assert_eq!(server.name, "home");
     assert_eq!(server.destination, "203.0.113.42");

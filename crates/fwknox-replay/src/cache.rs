@@ -135,9 +135,8 @@ impl ReplayCache {
     /// The loaded cache uses the default capacity.
     pub fn load_from_file(path: &std::path::Path) -> Result<Self, ReplayError> {
         let entries = crate::persist::read_cache_file(path)?;
-        let mut lru = LruCache::new(
-            NonZeroUsize::new(DEFAULT_MAX_ENTRIES).expect("DEFAULT_MAX_ENTRIES > 0"),
-        );
+        let mut lru =
+            LruCache::new(NonZeroUsize::new(DEFAULT_MAX_ENTRIES).expect("DEFAULT_MAX_ENTRIES > 0"));
         for (k, v) in entries {
             lru.put(k, v);
         }

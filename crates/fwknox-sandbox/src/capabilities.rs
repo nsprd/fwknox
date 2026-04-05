@@ -73,9 +73,7 @@ pub fn drop_all() -> Result<(), SandboxError> {
 pub fn raise_effective(keep: &[Capability]) -> Result<(), SandboxError> {
     for cap in keep {
         caps::raise(None, CapSet::Effective, *cap).map_err(|e| {
-            SandboxError::Capability(format!(
-                "could not raise {cap:?} into effective set: {e}"
-            ))
+            SandboxError::Capability(format!("could not raise {cap:?} into effective set: {e}"))
         })?;
     }
     Ok(())
