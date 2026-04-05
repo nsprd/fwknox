@@ -180,11 +180,6 @@ mod tests {
     }
 
     impl CaptureBackend for ScriptedCapture {
-        fn recv(&self) -> Result<CapturedPacket, CaptureError> {
-            // Not used in these tests — only recv_timeout matters.
-            unreachable!()
-        }
-
         fn recv_timeout(&self, _timeout: Duration) -> Result<Option<CapturedPacket>, CaptureError> {
             Ok(self.queue.lock().unwrap().pop())
         }
