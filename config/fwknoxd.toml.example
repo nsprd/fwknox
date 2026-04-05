@@ -3,8 +3,10 @@
 # fwknox daemon example configuration.
 #
 # Copy this file to /etc/fwknox/fwknoxd.toml and edit for your environment.
-# The master key below is ALL ZEROS and MUST be replaced before the
-# daemon is put into production. Generate a real one with:
+# The master key below is a fixed all-0x11 placeholder and MUST be
+# replaced before the daemon is put into production. The all-zero
+# key is explicitly rejected by validate() so a missed edit is
+# caught at startup. Generate a real key with:
 #
 #     head -c 32 /dev/urandom | base64
 #
@@ -14,9 +16,7 @@
 [daemon]
 listen_addr         = "0.0.0.0"
 listen_port         = 62201
-capture_mode        = "udp"
 firewall_backend    = "nftables"
-pid_file            = "/run/fwknox/fwknoxd.pid"
 run_user            = "fwknox"
 run_group           = "fwknox"
 max_spa_packet_age  = "120s"
@@ -25,7 +25,6 @@ flush_rules_at_exit = true
 default_fw_timeout  = "30s"
 max_fw_timeout      = "5m"
 enable_systemd      = true
-log_level           = "info"
 enable_sandbox      = true
 landlock_enabled    = false
 enable_privsep      = true
@@ -41,10 +40,12 @@ max_age    = "24h"
 # The `source` and `open_ports` fields are TOML arrays even when there is
 # only a single entry.
 #
-# Replace master_key_base64 with your own 32-byte base64 key before use —
-# the all-zeros key below is for parse testing only and is NOT secure.
+# Replace master_key_base64 with your own 32-byte base64 key before use.
+# The fixed-pattern all-0x11 key below is for parse testing only and is
+# NOT secure. validate() rejects the all-zero key specifically so an
+# operator who forgot to edit this file gets a loud error at startup.
 [[access]]
 name              = "ssh-from-anywhere"
 source            = ["any"]
 open_ports        = ["tcp/22"]
-master_key_base64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+master_key_base64 = "ERERERERERERERERERERERERERERERERERERERERERE="

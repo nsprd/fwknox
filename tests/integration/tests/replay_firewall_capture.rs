@@ -82,7 +82,10 @@ fn end_to_end_capture_validate_replay_install() {
     client.send_to(&wire, server_addr).unwrap();
 
     // Daemon side: receive, parse, validate, replay-check, stanza-match, install.
-    let captured = server.recv().unwrap();
+    let captured = server
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
+        .expect("packet should arrive");
     let parsed = parse_packet(&captured.data, &master_key).expect("parse succeeds");
     validate_against_clock(
         &parsed,

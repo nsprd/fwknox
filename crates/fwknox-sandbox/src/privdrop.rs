@@ -53,7 +53,23 @@ pub fn drop_to(user: &str, group: &str) -> Result<(), SandboxError> {
 
     setgroups(&[gid]).map_err(|e| SandboxError::PrivDrop(format!("setgroups failed: {e}")))?;
     setgid(gid).map_err(|e| SandboxError::PrivDrop(format!("setgid failed: {e}")))?;
+
+    // Preserve Permitted capabilities across setuid. Without this,
+    // the kernel clears Permitted/Effective/Ambient during the setuid
+    // fixup (capabilities(7) "Effect of user ID changes on
+    // capabilities"). The caller is responsible for re-raising the
+    // effective set afterwards via `capabilities::raise_effective`.
+    caps::securebits::set_keepcaps(true)
+        .map_err(|e| SandboxError::PrivDrop(format!("set_keepcaps(true) failed: {e}")))?;
+
     setuid(uid).map_err(|e| SandboxError::PrivDrop(format!("setuid failed: {e}")))?;
+
+    // Clear the keepcaps bit now that the setuid is done; we don't
+    // want it to persist for future setuid calls (there shouldn't be
+    // any, but this is defensive).
+    caps::securebits::set_keepcaps(false)
+        .map_err(|e| SandboxError::PrivDrop(format!("set_keepcaps(false) failed: {e}")))?;
+
     Ok(())
 }
 

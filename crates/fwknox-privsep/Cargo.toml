@@ -8,11 +8,22 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+duration_suboptimal_units = "allow"
 
 [dependencies]
 fwknox-proto.workspace = true
+libc.workspace = true
 nix.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true

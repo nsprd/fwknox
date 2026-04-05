@@ -115,20 +115,32 @@ Requires nightly Rust (pinned in `rust-toolchain.toml`) and nftables at runtime.
    [defaults]
    transport = "udp"
 
-   [[servers]]
+   [[server]]
    name = "home"
-   address = "203.0.113.42"
+   destination = "203.0.113.42"
    port = 62201
+   access = ["tcp/22"]
    master_key_base64 = "<same key as server>"
+   fw_timeout = "30s"
    ```
 
 5. **Send a packet to open SSH:**
    ```bash
-   fwknox send --server home --open tcp/22 --duration 30s
+   fwknox -n home                       # use the "home" entry above
    ssh user@203.0.113.42
    ```
 
-   The rule self-expires after 30 seconds — established connections survive, but no new ones.
+   Or, with everything on the command line (no config file):
+
+   ```bash
+   fwknox -D 203.0.113.42 \
+          -A tcp/22 \
+          -t 30 \
+          -k "<your 32-byte base64 master key>"
+   ```
+
+   The rule self-expires after `fw_timeout` / `-t` seconds — established
+   connections survive, but no new ones.
 
 ## Configuration
 

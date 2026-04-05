@@ -59,6 +59,14 @@ pub fn run(
         "fwknox daemon starting in privsep mode"
     );
 
+    // Flush BEFORE init so any stale table from a previous (crashed)
+    // run is cleared, then we install our fresh ruleset. Calling flush
+    // after init would tear down the table we just created.
+    if config.daemon.flush_rules_at_init {
+        if let Err(e) = firewall.flush() {
+            warn!(error = %e, "firewall flush at init failed; continuing");
+        }
+    }
     firewall.init()?;
 
     // Create the two socketpairs BEFORE fork so every process inherits
@@ -89,6 +97,7 @@ pub fn run(
             // are in place but BEFORE entering the worker loop. From
             // this point forward the worker has no filesystem access
             // and only the syscalls in the worker_filter allowlist.
+            fwknox_sandbox::install_worker_panic_hook("capture");
             if let Err(e) = fwknox_sandbox::apply_worker_sandbox("capture") {
                 eprintln!("capture worker: apply_worker_sandbox failed: {e}");
                 std::process::exit(1);
@@ -169,6 +178,7 @@ fn run_parent_after_capture_fork(
             // bug in fwknox-proto's parser would otherwise be a
             // remote attack surface; the sandbox makes that surface
             // moot.
+            fwknox_sandbox::install_worker_panic_hook("crypto");
             if let Err(e) = fwknox_sandbox::apply_worker_sandbox("crypto") {
                 eprintln!("crypto worker: apply_worker_sandbox failed: {e}");
                 std::process::exit(1);
@@ -215,6 +225,14 @@ fn run_parent_loop(
     capture_handle: &ForkedWorker,
     crypto_handle: &ForkedWorker,
 ) -> Result<(), DaemonError> {
+    // Install parent-side signal handlers now that the forks are done.
+    // The children each installed their own ShutdownSignal + handlers
+    // inside their fork branches, so the parent's handlers are
+    // independent of theirs. Deferring installation until here avoids
+    // the children inheriting a handler that references a cloned Arc
+    // pointing at dead parent state.
+    shutdown.install_handlers().map_err(DaemonError::from)?;
+
     parent_reader
         .set_read_timeout(Some(PARENT_POLL_INTERVAL))
         .map_err(|e| DaemonError::from(PrivsepError::Io(e)))?;
@@ -229,8 +247,10 @@ fn run_parent_loop(
         warn!(error = %e, "failed to install SIGCHLD handler; dead workers will not be detected");
     }
 
-    if let Err(e) = fwknox_sandbox::notify::ready() {
-        warn!(error = %e, "sd_notify(READY=1) failed");
+    if config.daemon.enable_systemd {
+        if let Err(e) = fwknox_sandbox::notify::ready() {
+            warn!(error = %e, "sd_notify(READY=1) failed");
+        }
     }
 
     info!("parent: entering main loop");
@@ -249,8 +269,27 @@ fn run_parent_loop(
                 warn!(error = %e, "recv from crypto worker failed");
             }
         }
-        let _ = fwknox_sandbox::notify::watchdog();
+        if config.daemon.enable_systemd {
+            let _ = fwknox_sandbox::notify::watchdog();
+        }
         tick = tick.wrapping_add(1);
+        // Eager reap: if SIGCHLD has fired (which also flipped the
+        // shutdown flag via the handler registered below), snapshot
+        // which child died so we can log it before the shutdown path
+        // tries to terminate_and_wait on a pid that's already reaped.
+        match fwknox_privsep::try_reap_any_child() {
+            Ok(Some(pid)) => {
+                warn!(
+                    pid = pid.as_raw(),
+                    "parent: worker exited; initiating shutdown"
+                );
+                shutdown.trigger();
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(error = %e, "parent: waitpid(WNOHANG) failed");
+            }
+        }
         if tick.is_multiple_of(crate::run::PRUNE_EVERY_TICKS) {
             let pruned = replay.prune_older_than(config.replay.max_age);
             if pruned > 0 {
@@ -263,7 +302,9 @@ fn run_parent_loop(
         shutdown = shutdown.is_shutdown(),
         "parent: shutting down workers"
     );
-    let _ = fwknox_sandbox::notify::stopping();
+    if config.daemon.enable_systemd {
+        let _ = fwknox_sandbox::notify::stopping();
+    }
 
     if let Err(e) = capture_handle.terminate_and_wait() {
         warn!(error = %e, "capture worker reap failed");
@@ -272,8 +313,10 @@ fn run_parent_loop(
         warn!(error = %e, "crypto worker reap failed");
     }
 
-    if let Err(e) = firewall.flush() {
-        error!(error = %e, "firewall flush failed during shutdown");
+    if config.daemon.flush_rules_at_exit {
+        if let Err(e) = firewall.flush() {
+            error!(error = %e, "firewall flush failed during shutdown");
+        }
     }
     if let Err(e) = replay.save_to_file(&config.replay.cache_path) {
         warn!(error = %e, "replay cache save failed during shutdown");

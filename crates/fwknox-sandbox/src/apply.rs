@@ -85,6 +85,10 @@ pub fn apply(config: &SandboxConfig) -> Result<(), SandboxError> {
     // be able to read those paths.
     if let Some(target) = &config.drop_to {
         privdrop::drop_to(&target.user, &target.group)?;
+        // Re-raise the effective caps. setuid cleared them even though
+        // PR_SET_KEEPCAPS preserved Permitted — we must explicitly
+        // promote Permitted back into Effective for the caps we kept.
+        capabilities::raise_effective(&config.keep_caps)?;
     }
 
     // Step 3: Landlock. This is irrevocable — nothing we do after this

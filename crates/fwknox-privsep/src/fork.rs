@@ -96,6 +96,22 @@ impl Drop for ForkedWorker {
     }
 }
 
+/// Non-blocking `waitpid(-1, WNOHANG)` that returns the pid of a child
+/// that has exited, or `None` if no child has exited yet. Returns
+/// `Err` only on actual `waitpid` syscall errors (ECHILD is mapped to
+/// `None`).
+pub fn try_reap_any_child() -> Result<Option<nix::unistd::Pid>, PrivsepError> {
+    use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+    match waitpid(None, Some(WaitPidFlag::WNOHANG)) {
+        Ok(WaitStatus::Exited(pid, _) | WaitStatus::Signaled(pid, _, _)) => Ok(Some(pid)),
+        Ok(_) | Err(nix::errno::Errno::ECHILD) => Ok(None),
+        Err(e) => Err(PrivsepError::Syscall {
+            syscall: "waitpid(WNOHANG)",
+            source: e,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

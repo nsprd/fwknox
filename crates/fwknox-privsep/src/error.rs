@@ -37,4 +37,16 @@ pub enum PrivsepError {
     /// The IPC peer closed the socket while we were waiting for a message.
     #[error("ipc peer closed")]
     PeerClosed,
+
+    /// A received datagram was truncated because it exceeded the
+    /// IPC message limit. The sender's `send_msg` should have rejected
+    /// the message before transmission — if this error fires, there
+    /// is a version or schema mismatch between sender and receiver.
+    #[error("IPC datagram truncated: received {reported} bytes, limit is {limit}")]
+    IpcTruncated {
+        /// The kernel-reported true size of the incoming datagram.
+        reported: usize,
+        /// Our receive buffer limit.
+        limit: usize,
+    },
 }

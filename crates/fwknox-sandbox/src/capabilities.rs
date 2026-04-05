@@ -61,6 +61,24 @@ pub fn drop_all() -> Result<(), SandboxError> {
     drop_all_except(&[])
 }
 
+/// After a `setuid()` that cleared the effective set (even though the
+/// Permitted set was preserved by `PR_SET_KEEPCAPS`), re-raise the
+/// requested capabilities from Permitted into Effective.
+///
+/// This is the final step of the privdrop sequence and assumes the
+/// caller already ran [`drop_all_except`] to restrict the Permitted
+/// set to exactly `keep`. If a capability in `keep` isn't in
+/// Permitted (e.g. because the parent didn't actually hold it), this
+/// returns a `SandboxError::Capability`.
+pub fn raise_effective(keep: &[Capability]) -> Result<(), SandboxError> {
+    for cap in keep {
+        caps::raise(None, CapSet::Effective, *cap).map_err(|e| {
+            SandboxError::Capability(format!("could not raise {cap:?} into effective set: {e}"))
+        })?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

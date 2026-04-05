@@ -65,11 +65,21 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     let udp_socket = std::net::UdpSocket::bind(listen_addr)?;
 
     // Step 3: replay cache.
-    let replay = ReplayCache::load_from_file(&config.replay.cache_path)?;
+    let cap = std::num::NonZeroUsize::new(config.replay.max_entries)
+        .unwrap_or_else(|| std::num::NonZeroUsize::new(1).expect("1 > 0"));
+    let mut replay = if config.replay.cache_path.exists() {
+        ReplayCache::load_from_file(&config.replay.cache_path)?
+    } else {
+        ReplayCache::with_capacity(cap)
+    };
+    replay.set_persist_path(config.replay.cache_path.clone());
+    let replay = replay; // freeze into an immutable binding for the rest of the run
 
-    // Step 4: signal handlers.
+    // Step 4: create the shutdown signal, but DO NOT install handlers
+    // yet — we install them in the parent AFTER fork so the children
+    // don't inherit a stale handler pointing at a cloned Arc that no
+    // longer backs anything live.
     let shutdown = ShutdownSignal::new();
-    shutdown.install_handlers()?;
 
     // Step 5: sandbox (capability drop + privdrop; Landlock only
     // activates if explicitly configured — see Phase 4 rationale).
@@ -87,6 +97,7 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
         info!("running in single-process mode (privsep disabled in config)");
         // Wrap udp_socket in a UdpCapture for the single-process run loop.
         let capture = UdpCapture::from_socket(udp_socket);
+        shutdown.install_handlers()?;
         run(&config, &capture, firewall.as_mut(), &replay, &shutdown)
     }
 }

@@ -13,6 +13,7 @@ use crate::{
 
 /// Top-level structure of `fwknox.toml` (client side).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ClientConfig {
     /// `[defaults]` section.
     #[serde(default)]
@@ -24,6 +25,7 @@ pub struct ClientConfig {
 
 /// The `[defaults]` section.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DefaultsSection {
     /// Default transport for outbound SPA packets.
     #[serde(default)]
@@ -38,6 +40,7 @@ pub struct DefaultsSection {
 
 /// One `[[server]]` entry: a named connection to a fwknox daemon.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerEntry {
     /// Human-readable name (used by `fwknox -n <name>`).
     pub name: String,
@@ -189,5 +192,47 @@ master_key_base64 = "{k}"
         );
         let cfg: ClientConfig = toml::from_str(&body).unwrap();
         assert_eq!(cfg.defaults.transport, ClientTransport::Udp);
+    }
+
+    #[test]
+    fn unknown_defaults_field_is_rejected() {
+        let body = format!(
+            r#"
+[defaults]
+bogus_flag = true
+
+[[server]]
+name = "x"
+destination = "x"
+access = ["tcp/22"]
+master_key_base64 = "{k}"
+"#,
+            k = b64(&[0x11; 32]),
+        );
+        let err = toml::from_str::<ClientConfig>(&body).unwrap_err();
+        assert!(
+            err.to_string().contains("bogus_flag") || err.to_string().contains("unknown field"),
+            "expected unknown-field error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_server_field_is_rejected() {
+        let body = format!(
+            r#"
+[[server]]
+name = "x"
+destination = "x"
+access = ["tcp/22"]
+master_key_base64 = "{k}"
+typo_field = 42
+"#,
+            k = b64(&[0x11; 32]),
+        );
+        let err = toml::from_str::<ClientConfig>(&body).unwrap_err();
+        assert!(
+            err.to_string().contains("typo_field") || err.to_string().contains("unknown field"),
+            "expected unknown-field error, got: {err}"
+        );
     }
 }

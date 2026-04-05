@@ -30,6 +30,13 @@ prepare() {
     # required components (rustfmt, clippy, rust-src) — rustup will fetch
     # them on demand, so we don't need to duplicate them here.
     rustup toolchain install nightly --profile minimal
+
+    # Fetch every crate dependency now, while the makepkg chroot still
+    # has network access. Without this, build() / check() fail in a
+    # clean chroot because Cargo cannot reach crates.io.
+    export PATH="$HOME/.cargo/bin:$PATH"
+    export CARGO_TARGET_DIR="$srcdir/target"
+    cargo fetch --locked
 }
 
 build() {

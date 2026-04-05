@@ -9,14 +9,12 @@ use crate::{error::CaptureError, packet::CapturedPacket};
 /// A pluggable packet capture source. Implementations must be
 /// `Send + Sync` because the daemon's capture worker may be a separate
 /// thread or process.
+///
+/// [`recv_timeout`](CaptureBackend::recv_timeout) is the only supported
+/// operation: the daemon always polls with a bounded timeout so it can
+/// check its shutdown flag, and there is no production caller that needs
+/// an indefinitely-blocking receive.
 pub trait CaptureBackend: Send + Sync {
-    /// Block until the next packet arrives.
-    ///
-    /// Implementations should return [`CaptureError::Recv`] for transient
-    /// failures (e.g., interrupted system call); the caller is expected
-    /// to log and continue.
-    fn recv(&self) -> Result<CapturedPacket, CaptureError>;
-
     /// Wait up to `timeout` for a packet. Returns `Ok(None)` on timeout.
     ///
     /// The daemon's main loop uses this so it can poll its shutdown flag

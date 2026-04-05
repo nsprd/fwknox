@@ -4,6 +4,7 @@
 
 use std::{
     net::{SocketAddr, UdpSocket},
+    sync::Mutex,
     time::Duration,
 };
 
@@ -14,16 +15,25 @@ use crate::{backend::CaptureBackend, error::CaptureError, packet::CapturedPacket
 pub const MAX_DATAGRAM_LEN: usize = 1500;
 
 /// A capture backend that listens on a UDP socket.
+///
+/// `last_timeout` caches the most recently applied read timeout so that
+/// steady-state `recv_timeout` calls (the daemon's main loop polls with
+/// the same duration on every iteration) skip a redundant
+/// `set_read_timeout` syscall per packet.
 #[derive(Debug)]
 pub struct UdpCapture {
     socket: UdpSocket,
+    last_timeout: Mutex<Option<Duration>>,
 }
 
 impl UdpCapture {
     /// Bind a new UDP capture socket to the given address.
     pub fn bind(addr: SocketAddr) -> Result<Self, CaptureError> {
         let socket = UdpSocket::bind(addr).map_err(CaptureError::Bind)?;
-        Ok(Self { socket })
+        Ok(Self {
+            socket,
+            last_timeout: Mutex::new(None),
+        })
     }
 
     /// Wrap an already-bound [`UdpSocket`] in a [`UdpCapture`].
@@ -34,7 +44,10 @@ impl UdpCapture {
     /// the config dispatches to.
     #[must_use]
     pub fn from_socket(socket: UdpSocket) -> Self {
-        Self { socket }
+        Self {
+            socket,
+            last_timeout: Mutex::new(None),
+        }
     }
 
     /// Borrow the underlying socket's local address (used by tests to
@@ -45,26 +58,20 @@ impl UdpCapture {
 }
 
 impl CaptureBackend for UdpCapture {
-    fn recv(&self) -> Result<CapturedPacket, CaptureError> {
-        // Make sure we're in blocking-no-timeout mode for plain recv.
-        self.socket
-            .set_read_timeout(None)
-            .map_err(CaptureError::Recv)?;
-        let mut buf = [0u8; MAX_DATAGRAM_LEN];
-        let (len, peer) = self
-            .socket
-            .recv_from(&mut buf)
-            .map_err(CaptureError::Recv)?;
-        Ok(CapturedPacket {
-            source_ip: peer.ip(),
-            data: buf[..len].to_vec(),
-        })
-    }
-
     fn recv_timeout(&self, timeout: Duration) -> Result<Option<CapturedPacket>, CaptureError> {
-        self.socket
-            .set_read_timeout(Some(timeout))
-            .map_err(CaptureError::Recv)?;
+        // Only issue the `set_read_timeout` syscall when the requested
+        // timeout differs from the last one we applied. The daemon's
+        // main loop polls with a fixed duration on every iteration, so
+        // this elides one syscall per packet in steady state.
+        {
+            let mut cached = self.last_timeout.lock().expect("last_timeout poisoned");
+            if *cached != Some(timeout) {
+                self.socket
+                    .set_read_timeout(Some(timeout))
+                    .map_err(CaptureError::Recv)?;
+                *cached = Some(timeout);
+            }
+        }
         let mut buf = [0u8; MAX_DATAGRAM_LEN];
         match self.socket.recv_from(&mut buf) {
             Ok((len, peer)) => Ok(Some(CapturedPacket {
@@ -118,7 +125,10 @@ mod tests {
             UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))).unwrap();
         let payload = b"hello fwknox";
         client.send_to(payload, server_addr).unwrap();
-        let pkt = server.recv().unwrap();
+        let pkt = server
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .expect("packet should arrive");
         assert_eq!(pkt.data, payload);
         assert_eq!(pkt.source_ip, std::net::IpAddr::V4(Ipv4Addr::LOCALHOST));
     }
@@ -132,7 +142,10 @@ mod tests {
             UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))).unwrap();
         let big_payload = vec![0xAA; 2000];
         client.send_to(&big_payload, server_addr).unwrap();
-        let pkt = server.recv().unwrap();
+        let pkt = server
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .expect("packet should arrive");
         // Kernel truncates to MAX_DATAGRAM_LEN.
         assert_eq!(pkt.data.len(), MAX_DATAGRAM_LEN);
     }

@@ -43,11 +43,21 @@ pub fn run(
         listen_port = config.daemon.listen_port,
         "fwknox daemon starting"
     );
+    // Flush BEFORE init so any stale table from a previous (crashed)
+    // run is cleared, then we install our fresh ruleset. Calling flush
+    // after init would tear down the table we just created.
+    if config.daemon.flush_rules_at_init {
+        if let Err(e) = firewall.flush() {
+            warn!(error = %e, "firewall flush at init failed; continuing");
+        }
+    }
     firewall.init()?;
 
     // Tell systemd we're ready. No-op outside systemd.
-    if let Err(e) = fwknox_sandbox::notify::ready() {
-        warn!(error = %e, "sd_notify(READY=1) failed (not running under systemd?)");
+    if config.daemon.enable_systemd {
+        if let Err(e) = fwknox_sandbox::notify::ready() {
+            warn!(error = %e, "sd_notify(READY=1) failed (not running under systemd?)");
+        }
     }
 
     let mut tick: u64 = 0;
@@ -67,7 +77,9 @@ pub fn run(
         }
         // Heartbeat systemd every loop iteration. The socket write is
         // cheap (just an AF_UNIX sendmsg) and no-op outside systemd.
-        let _ = fwknox_sandbox::notify::watchdog();
+        if config.daemon.enable_systemd {
+            let _ = fwknox_sandbox::notify::watchdog();
+        }
         tick = tick.wrapping_add(1);
         if tick.is_multiple_of(PRUNE_EVERY_TICKS) {
             let pruned = replay.prune_older_than(config.replay.max_age);
@@ -78,9 +90,13 @@ pub fn run(
     };
 
     info!("fwknox daemon shutting down");
-    let _ = fwknox_sandbox::notify::stopping();
-    if let Err(e) = firewall.flush() {
-        error!(error = %e, "firewall flush failed during shutdown");
+    if config.daemon.enable_systemd {
+        let _ = fwknox_sandbox::notify::stopping();
+    }
+    if config.daemon.flush_rules_at_exit {
+        if let Err(e) = firewall.flush() {
+            error!(error = %e, "firewall flush failed during shutdown");
+        }
     }
     if let Err(e) = replay.save_to_file(&config.replay.cache_path) {
         warn!(error = %e, "replay cache save failed during shutdown");
@@ -164,11 +180,6 @@ mod tests {
     }
 
     impl CaptureBackend for ScriptedCapture {
-        fn recv(&self) -> Result<CapturedPacket, CaptureError> {
-            // Not used in these tests — only recv_timeout matters.
-            unreachable!()
-        }
-
         fn recv_timeout(&self, _timeout: Duration) -> Result<Option<CapturedPacket>, CaptureError> {
             Ok(self.queue.lock().unwrap().pop())
         }
