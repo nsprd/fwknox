@@ -95,6 +95,19 @@ sudo install -Dm640 config/fwknoxd.toml.example /etc/fwknox/fwknoxd.toml
 
 Requires nightly Rust (pinned in `rust-toolchain.toml`) and nftables at runtime.
 
+### Running in Docker: host firewall mode
+
+The bundled `docker-compose.yml` runs fwknoxd as a **host firewall tool inside a container**, not as a containerised firewall for the container's own network. It works because `network_mode: host` puts the container in the host's network namespace, so nftables operations modify the real host ruleset, and `cap_add: NET_ADMIN` grants the daemon the capability to drive nftables from inside the container.
+
+This deployment mode has known failure cases — check these before deploying:
+
+- **Rootless Docker / Podman** cannot grant CAP_NET_ADMIN on the host kernel; this mode won't work at all. Install from source or via AUR instead.
+- **Docker `userns-remap`** makes the container's CAP_NET_ADMIN a no-op on the host. Either disable remapping globally or add `userns: host` to the compose service.
+- **Strict AppArmor / SELinux profiles** may block netlink even with CAP_NET_ADMIN. Add `security_opt: [apparmor:unconfined]` to the compose service or install a targeted policy.
+- The daemon **owns the `fwknox` nftables table exclusively** and flushes it on init and exit. Do not run a second process writing to the same table name.
+
+If any of the above is a blocker for your environment, prefer the [AUR](#arch-linux-aur) or [from-source](#from-source) install path — both land the daemon on the host directly with the shipped systemd unit.
+
 ## Quickstart
 
 1. **Generate a master key:**

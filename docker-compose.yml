@@ -7,9 +7,28 @@
 #   # edit master_key_base64 in config/fwknoxd.toml
 #   docker compose up --build
 #
-# The daemon runs on the host network so it can drive the host's nftables
-# and see real SPA packets on the host's interfaces. This requires root
-# on the host.
+# IMPORTANT: This compose file runs fwknoxd as a HOST FIREWALL TOOL,
+# not as a containerised firewall for the container's own traffic.
+#
+# How this works:
+#   * `network_mode: host` puts the container in the host's network
+#     namespace, so nftables operations modify the REAL host firewall.
+#   * `cap_add: NET_ADMIN` grants the daemon the capability to drive
+#     nftables from inside the container. Combined with the daemon's
+#     internal PR_SET_KEEPCAPS handling, the cap survives its
+#     privdrop to the fwknox user.
+#
+# Caveats that will break this deployment:
+#   * Rootless Docker / Podman: no CAP_NET_ADMIN on the host kernel,
+#     won't work at all.
+#   * Docker userns-remap: CAP_NET_ADMIN in the container's user
+#     namespace != host CAP_NET_ADMIN. Disable remap for this
+#     container (add `userns: host` below) or don't use remap.
+#   * Strict AppArmor / SELinux: may block netlink even with
+#     CAP_NET_ADMIN. Add `security_opt: [apparmor:unconfined]` or a
+#     targeted policy carve-out.
+#   * Another process also managing nftables: the daemon owns the
+#     `fwknox` table exclusively and flushes it on init/exit.
 
 services:
   fwknoxd:
