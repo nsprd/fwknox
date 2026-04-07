@@ -8,3 +8,7 @@
 //! map, and all other traffic shares a single global fallback bucket.
 //! Enforced in the capture path before any packet reaches the crypto
 //! pipeline.
+
+pub mod clock;
+
+pub use clock::{Clock, MockClock, SystemClock};
