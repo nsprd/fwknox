@@ -21,6 +21,9 @@ pub struct DaemonConfig {
     /// `[replay]` section.
     #[serde(default)]
     pub replay: ReplaySection,
+    /// `[rate_limit]` section.
+    #[serde(default)]
+    pub rate_limit: RateLimitSection,
     /// `[[access]]` stanzas.
     #[serde(default, rename = "access")]
     pub access: Vec<AccessStanza>,
@@ -138,6 +141,65 @@ impl Default for ReplaySection {
     }
 }
 
+/// The `[rate_limit]` section: per-source packet rate limiting.
+///
+/// Defaults are tuned for a typical fwknox deployment with dozens of
+/// legitimate clients and no upstream rate limiter..
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimitSection {
+    /// Master switch. Set to `false` to disable rate limiting entirely.
+    #[serde(default = "yes")]
+    pub enabled: bool,
+
+    /// Per-source token refill rate (tokens per second) for sources
+    /// that have been promoted into exact tracking.
+    #[serde(default = "default_per_source_rate_per_sec")]
+    pub per_source_rate_per_sec: u64,
+
+    /// Per-source burst capacity (max tokens a per-source bucket holds).
+    #[serde(default = "default_per_source_burst")]
+    pub per_source_burst: u64,
+
+    /// Maximum number of exact-tracked sources in the LRU.
+    #[serde(default = "default_tracked_sources_capacity")]
+    pub tracked_sources_capacity: usize,
+
+    /// Global fallback bucket refill rate (tokens per second).
+    #[serde(default = "default_global_rate_per_sec")]
+    pub global_rate_per_sec: u64,
+
+    /// Global fallback bucket burst capacity.
+    #[serde(default = "default_global_burst")]
+    pub global_burst: u64,
+
+    /// Number of successful global-bucket consumptions before a source
+    /// is promoted into exact tracking. Rejected traffic does not count.
+    #[serde(default = "default_promotion_threshold")]
+    pub promotion_threshold: u32,
+
+    /// IPv6 source addresses are masked to this prefix length before
+    /// keying. Valid range: 1..=128. Default 64 is the IETF-standard
+    /// end-site allocation boundary.
+    #[serde(default = "default_ipv6_prefix_len")]
+    pub ipv6_prefix_len: u8,
+}
+
+impl Default for RateLimitSection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            per_source_rate_per_sec: default_per_source_rate_per_sec(),
+            per_source_burst: default_per_source_burst(),
+            tracked_sources_capacity: default_tracked_sources_capacity(),
+            global_rate_per_sec: default_global_rate_per_sec(),
+            global_burst: default_global_burst(),
+            promotion_threshold: default_promotion_threshold(),
+            ipv6_prefix_len: default_ipv6_prefix_len(),
+        }
+    }
+}
+
 /// One `[[access]]` stanza, defining a key + the policy that key authorizes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -226,6 +288,27 @@ fn default_replay_max_age() -> Duration {
 }
 fn default_replay_max_entries() -> usize {
     10_000
+}
+fn default_per_source_rate_per_sec() -> u64 {
+    10
+}
+fn default_per_source_burst() -> u64 {
+    20
+}
+fn default_tracked_sources_capacity() -> usize {
+    1024
+}
+fn default_global_rate_per_sec() -> u64 {
+    500
+}
+fn default_global_burst() -> u64 {
+    1000
+}
+fn default_promotion_threshold() -> u32 {
+    5
+}
+fn default_ipv6_prefix_len() -> u8 {
+    64
 }
 fn yes() -> bool {
     true
@@ -455,6 +538,88 @@ master_key_base64 = "{}"
     fn enable_privsep_defaults_to_true() {
         let cfg: DaemonConfig = toml::from_str(&minimal_config_toml()).unwrap();
         assert!(cfg.daemon.enable_privsep);
+    }
+
+    #[test]
+    fn default_config_has_rate_limit_section_with_defaults() {
+        let cfg: DaemonConfig = toml::from_str(&minimal_config_toml()).unwrap();
+        assert!(cfg.rate_limit.enabled);
+        assert_eq!(cfg.rate_limit.per_source_rate_per_sec, 10);
+        assert_eq!(cfg.rate_limit.per_source_burst, 20);
+        assert_eq!(cfg.rate_limit.tracked_sources_capacity, 1024);
+        assert_eq!(cfg.rate_limit.global_rate_per_sec, 500);
+        assert_eq!(cfg.rate_limit.global_burst, 1000);
+        assert_eq!(cfg.rate_limit.promotion_threshold, 5);
+        assert_eq!(cfg.rate_limit.ipv6_prefix_len, 64);
+    }
+
+    #[test]
+    fn partial_rate_limit_section_fills_missing_fields() {
+        let body = format!(
+            r#"
+[daemon]
+[replay]
+
+[rate_limit]
+per_source_rate_per_sec = 50
+
+[[access]]
+name = "t"
+source = ["any"]
+open_ports = ["tcp/22"]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        assert_eq!(cfg.rate_limit.per_source_rate_per_sec, 50);
+        assert_eq!(cfg.rate_limit.per_source_burst, 20); // default
+        assert!(cfg.rate_limit.enabled); // default
+    }
+
+    #[test]
+    fn rate_limit_section_rejects_unknown_fields() {
+        let body = format!(
+            r#"
+[daemon]
+[replay]
+
+[rate_limit]
+unknown_field = true
+
+[[access]]
+name = "t"
+source = ["any"]
+open_ports = ["tcp/22"]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        );
+        let err = toml::from_str::<DaemonConfig>(&body).unwrap_err();
+        assert!(err.to_string().contains("unknown"));
+    }
+
+    #[test]
+    fn rate_limit_can_be_disabled_via_toml() {
+        let body = format!(
+            r#"
+[daemon]
+[replay]
+
+[rate_limit]
+enabled = false
+
+[[access]]
+name = "t"
+source = ["any"]
+open_ports = ["tcp/22"]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        assert!(!cfg.rate_limit.enabled);
+        cfg.validate().unwrap();
     }
 
     #[test]
