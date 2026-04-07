@@ -376,6 +376,46 @@ impl DaemonConfig {
                 "default_fw_timeout must be <= max_fw_timeout",
             ));
         }
+        // Rate limit validation. Only enforce when enabled — if the operator
+        // set enabled=false they've opted out explicitly and the numeric
+        // values are ignored.
+        if self.rate_limit.enabled {
+            if self.rate_limit.per_source_rate_per_sec < 1 {
+                return Err(ConfigError::invalid(
+                    "per_source_rate_per_sec must be >= 1 when rate limiting is enabled",
+                ));
+            }
+            if self.rate_limit.global_rate_per_sec < 1 {
+                return Err(ConfigError::invalid(
+                    "global_rate_per_sec must be >= 1 when rate limiting is enabled",
+                ));
+            }
+            if self.rate_limit.per_source_burst < self.rate_limit.per_source_rate_per_sec {
+                return Err(ConfigError::invalid(
+                    "per_source_burst must be >= per_source_rate_per_sec",
+                ));
+            }
+            if self.rate_limit.global_burst < self.rate_limit.global_rate_per_sec {
+                return Err(ConfigError::invalid(
+                    "global_burst must be >= global_rate_per_sec",
+                ));
+            }
+            if self.rate_limit.tracked_sources_capacity == 0 {
+                return Err(ConfigError::invalid(
+                    "tracked_sources_capacity must be >= 1",
+                ));
+            }
+            if self.rate_limit.promotion_threshold == 0 {
+                return Err(ConfigError::invalid(
+                    "promotion_threshold must be >= 1",
+                ));
+            }
+            if !(1..=128).contains(&self.rate_limit.ipv6_prefix_len) {
+                return Err(ConfigError::invalid(
+                    "ipv6_prefix_len must be in 1..=128",
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -409,6 +449,24 @@ mod tests {
 
 [[access]]
 name = "test"
+source = ["any"]
+open_ports = ["tcp/22"]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        )
+    }
+
+    fn config_with_rate_limit_override(rate_limit_toml: &str) -> String {
+        format!(
+            r#"
+[daemon]
+[replay]
+
+{rate_limit_toml}
+
+[[access]]
+name = "t"
 source = ["any"]
 open_ports = ["tcp/22"]
 master_key_base64 = "{}"
@@ -641,5 +699,87 @@ master_key_base64 = "{}"
         );
         let cfg: DaemonConfig = toml::from_str(&body).unwrap();
         assert!(!cfg.daemon.enable_privsep);
+    }
+
+    #[test]
+    fn rate_limit_rejects_burst_less_than_rate() {
+        let body = config_with_rate_limit_override(
+            "[rate_limit]\nper_source_rate_per_sec = 10\nper_source_burst = 5\n",
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("per_source_burst"));
+    }
+
+    #[test]
+    fn rate_limit_rejects_global_burst_less_than_global_rate() {
+        let body = config_with_rate_limit_override(
+            "[rate_limit]\nglobal_rate_per_sec = 500\nglobal_burst = 100\n",
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("global_burst"));
+    }
+
+    #[test]
+    fn rate_limit_rejects_zero_tracked_capacity() {
+        let body = config_with_rate_limit_override(
+            "[rate_limit]\ntracked_sources_capacity = 0\n",
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("tracked_sources_capacity"));
+    }
+
+    #[test]
+    fn rate_limit_rejects_ipv6_prefix_zero() {
+        let body = config_with_rate_limit_override(
+            "[rate_limit]\nipv6_prefix_len = 0\n",
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("ipv6_prefix_len"));
+    }
+
+    #[test]
+    fn rate_limit_rejects_ipv6_prefix_over_128() {
+        let body = config_with_rate_limit_override(
+            "[rate_limit]\nipv6_prefix_len = 129\n",
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("ipv6_prefix_len"));
+    }
+
+    #[test]
+    fn rate_limit_rejects_promotion_threshold_zero() {
+        let body = config_with_rate_limit_override(
+            "[rate_limit]\npromotion_threshold = 0\n",
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("promotion_threshold"));
+    }
+
+    #[test]
+    fn rate_limit_rejects_zero_rates_while_enabled() {
+        let body = config_with_rate_limit_override(
+            "[rate_limit]\nper_source_rate_per_sec = 0\n",
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("per_source_rate_per_sec"));
+    }
+
+    #[test]
+    fn rate_limit_accepts_ipv6_prefix_at_boundary() {
+        // Both 1 and 128 must be accepted (inclusive range).
+        for len in [1u8, 128u8] {
+            let body = config_with_rate_limit_override(&format!(
+                "[rate_limit]\nipv6_prefix_len = {len}\n"
+            ));
+            let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+            cfg.validate().expect("boundary value should be accepted");
+        }
     }
 }
