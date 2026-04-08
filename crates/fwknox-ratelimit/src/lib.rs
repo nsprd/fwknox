@@ -10,5 +10,7 @@
 //! pipeline.
 
 pub mod clock;
+pub mod key;
 
 pub use clock::{Clock, MockClock, SystemClock};
+pub use key::SourceKey;
