@@ -12,5 +12,7 @@
 pub mod clock;
 pub mod key;
 
+mod bucket;
+
 pub use clock::{Clock, MockClock, SystemClock};
 pub use key::SourceKey;
