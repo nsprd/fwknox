@@ -17,7 +17,7 @@ use std::time::Instant;
 use fwknox_config::RateLimitSection;
 use lru::LruCache;
 
-use crate::bucket::TokenBucket;
+use crate::bucket::{BucketDecision, TokenBucket};
 use crate::clock::{Clock, SystemClock};
 use crate::key::SourceKey;
 use crate::stats::{Stats, StatsSnapshot};
@@ -109,17 +109,35 @@ impl RateLimiter {
     /// packets before process death still receive a decision.
     pub fn check(&self, src_ip: IpAddr) -> Decision {
         let Some(ref mutex) = self.inner else {
-            // Disabled mode: short-circuit before the mutex.
             self.stats.incr_allowed();
             return Decision::Pass;
         };
 
+        let key = SourceKey::from_ip(src_ip, self.config.ipv6_prefix_len);
         let mut inner = mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let _ = src_ip; // used in Task 9+
-        let _ = &mut *inner; // silence "unused" on the skeleton
-        // Full algorithm lands in Tasks 9 (Tier 1), 10 (Tier 2),
-        // 11 (promotion). For now the skeleton passes everything
-        // that reaches the mutex.
+        let now = inner.clock.now();
+
+        // Tier 1: exact-tracked hot source.
+        // `get_mut` moves the entry to MRU on access.
+        if let Some(bucket) = inner.tracked.get_mut(&key) {
+            let decision = bucket.consume(now);
+            return match decision {
+                BucketDecision::Pass => {
+                    self.stats.incr_allowed();
+                    Decision::Pass
+                }
+                BucketDecision::Drop => {
+                    self.stats.incr_dropped_per_source();
+                    Decision::Drop(DropReason::PerSourceExhausted)
+                }
+            };
+        }
+
+        // Tier 2 and promotion land in Tasks 10 and 11. For now, sources
+        // not in the tracked LRU pass through without being counted against
+        // the global bucket — this means Task 8's disabled-mode and Task 9's
+        // tracked-source tests all pass, but Task 10 tests will fail until
+        // the Tier 2 path is implemented.
         self.stats.incr_allowed();
         Decision::Pass
     }
@@ -131,10 +149,29 @@ impl RateLimiter {
     }
 }
 
+/// Test-only helper: pre-seed a source directly into the tracked LRU,
+/// bypassing the promotion flow. Lets us exercise Tier 1 in isolation.
+#[cfg(test)]
+impl RateLimiter {
+    fn insert_tracked_for_test(&self, src_ip: IpAddr) {
+        let Some(ref mutex) = self.inner else { panic!("disabled") };
+        let mut inner = mutex.lock().unwrap();
+        let now = inner.clock.now();
+        let key = SourceKey::from_ip(src_ip, self.config.ipv6_prefix_len);
+        let bucket = TokenBucket::new(
+            self.config.per_source_rate_per_sec,
+            self.config.per_source_burst,
+            now,
+        );
+        inner.tracked.push(key, bucket);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::MockClock;
+    use std::time::Duration;
 
     fn default_config() -> RateLimitSection {
         RateLimitSection::default()
@@ -185,5 +222,59 @@ mod tests {
         );
         let snap = limiter.stats();
         assert_eq!(snap, StatsSnapshot::default());
+    }
+
+    #[test]
+    fn tracked_source_passes_up_to_burst() {
+        // Burst 20 → 20 pass, 21st drops.
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        limiter.insert_tracked_for_test(ip);
+        for i in 0..20 {
+            assert_eq!(limiter.check(ip), Decision::Pass, "packet {i}");
+        }
+        assert_eq!(limiter.check(ip), Decision::Drop(DropReason::PerSourceExhausted));
+        let snap = limiter.stats();
+        assert_eq!(snap.allowed, 20);
+        assert_eq!(snap.dropped_per_source, 1);
+        assert_eq!(snap.dropped_global, 0);
+    }
+
+    #[test]
+    fn tracked_source_refills_over_time() {
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        limiter.insert_tracked_for_test(ip);
+        // Drain the burst.
+        for _ in 0..20 {
+            limiter.check(ip);
+        }
+        assert_eq!(limiter.check(ip), Decision::Drop(DropReason::PerSourceExhausted));
+        // Advance 1 second: rate=10 → 10 more tokens, capped at burst=20.
+        clock.advance(Duration::from_secs(1));
+        for _ in 0..10 {
+            assert_eq!(limiter.check(ip), Decision::Pass);
+        }
+        assert_eq!(limiter.check(ip), Decision::Drop(DropReason::PerSourceExhausted));
+    }
+
+    /// `Box<dyn Clock>` can't be cloned, and multiple test call-sites need
+    /// to share the same underlying `MockClock`. This wrapper holds an
+    /// `Arc<MockClock>` and implements `Clock` so both the test code and
+    /// the limiter's boxed clock point at the same mock.
+    struct CloneableMockClock(std::sync::Arc<MockClock>);
+
+    impl Clock for CloneableMockClock {
+        fn now(&self) -> Instant {
+            self.0.now()
+        }
     }
 }
