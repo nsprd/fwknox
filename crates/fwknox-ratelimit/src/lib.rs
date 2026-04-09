@@ -14,7 +14,9 @@ pub mod key;
 pub mod stats;
 
 mod bucket;
+mod limiter;
 
 pub use clock::{Clock, MockClock, SystemClock};
 pub use key::SourceKey;
+pub use limiter::{Decision, DropReason, RateLimiter};
 pub use stats::StatsSnapshot;
