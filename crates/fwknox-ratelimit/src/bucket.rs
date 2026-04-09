@@ -70,8 +70,9 @@ impl TokenBucket {
 #[cfg(test)]
 #[allow(clippy::float_cmp)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn fresh_bucket_starts_full() {
@@ -142,8 +143,8 @@ mod tests {
         b.consume(now);
         // Advance backwards (should be impossible with Instant, but
         // verify the guard).
-        let earlier = now;  // same instant, not earlier — Instant refuses
-        b.refill(earlier);  // must not panic
+        let earlier = now; // same instant, not earlier — Instant refuses
+        b.refill(earlier); // must not panic
         assert!(b.tokens < 10.0);
     }
 

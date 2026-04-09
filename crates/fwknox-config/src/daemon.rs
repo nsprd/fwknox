@@ -406,14 +406,10 @@ impl DaemonConfig {
                 ));
             }
             if self.rate_limit.promotion_threshold == 0 {
-                return Err(ConfigError::invalid(
-                    "promotion_threshold must be >= 1",
-                ));
+                return Err(ConfigError::invalid("promotion_threshold must be >= 1"));
             }
             if !(1..=128).contains(&self.rate_limit.ipv6_prefix_len) {
-                return Err(ConfigError::invalid(
-                    "ipv6_prefix_len must be in 1..=128",
-                ));
+                return Err(ConfigError::invalid("ipv6_prefix_len must be in 1..=128"));
             }
         }
         Ok(())
@@ -723,9 +719,7 @@ master_key_base64 = "{}"
 
     #[test]
     fn rate_limit_rejects_zero_tracked_capacity() {
-        let body = config_with_rate_limit_override(
-            "[rate_limit]\ntracked_sources_capacity = 0\n",
-        );
+        let body = config_with_rate_limit_override("[rate_limit]\ntracked_sources_capacity = 0\n");
         let cfg: DaemonConfig = toml::from_str(&body).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("tracked_sources_capacity"));
@@ -733,9 +727,7 @@ master_key_base64 = "{}"
 
     #[test]
     fn rate_limit_rejects_ipv6_prefix_zero() {
-        let body = config_with_rate_limit_override(
-            "[rate_limit]\nipv6_prefix_len = 0\n",
-        );
+        let body = config_with_rate_limit_override("[rate_limit]\nipv6_prefix_len = 0\n");
         let cfg: DaemonConfig = toml::from_str(&body).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("ipv6_prefix_len"));
@@ -743,9 +735,7 @@ master_key_base64 = "{}"
 
     #[test]
     fn rate_limit_rejects_ipv6_prefix_over_128() {
-        let body = config_with_rate_limit_override(
-            "[rate_limit]\nipv6_prefix_len = 129\n",
-        );
+        let body = config_with_rate_limit_override("[rate_limit]\nipv6_prefix_len = 129\n");
         let cfg: DaemonConfig = toml::from_str(&body).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("ipv6_prefix_len"));
@@ -753,9 +743,7 @@ master_key_base64 = "{}"
 
     #[test]
     fn rate_limit_rejects_promotion_threshold_zero() {
-        let body = config_with_rate_limit_override(
-            "[rate_limit]\npromotion_threshold = 0\n",
-        );
+        let body = config_with_rate_limit_override("[rate_limit]\npromotion_threshold = 0\n");
         let cfg: DaemonConfig = toml::from_str(&body).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("promotion_threshold"));
@@ -763,9 +751,7 @@ master_key_base64 = "{}"
 
     #[test]
     fn rate_limit_rejects_zero_rates_while_enabled() {
-        let body = config_with_rate_limit_override(
-            "[rate_limit]\nper_source_rate_per_sec = 0\n",
-        );
+        let body = config_with_rate_limit_override("[rate_limit]\nper_source_rate_per_sec = 0\n");
         let cfg: DaemonConfig = toml::from_str(&body).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("per_source_rate_per_sec"));

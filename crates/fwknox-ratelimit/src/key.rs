@@ -42,7 +42,10 @@ impl SourceKey {
     fn from_ipv4(v4: Ipv4Addr) -> Self {
         let mut bytes = [0u8; 16];
         bytes[..4].copy_from_slice(&v4.octets());
-        Self { discriminator: Discriminator::V4, bytes }
+        Self {
+            discriminator: Discriminator::V4,
+            bytes,
+        }
     }
 
     fn from_ipv6_masked(v6: Ipv6Addr, prefix_len: u8) -> Self {
@@ -67,7 +70,10 @@ impl SourceKey {
                 }
             }
         }
-        Self { discriminator: Discriminator::V6, bytes }
+        Self {
+            discriminator: Discriminator::V6,
+            bytes,
+        }
     }
 }
 
@@ -136,10 +142,8 @@ mod tests {
         // /65 means: keep 64 bits + 1 more bit. Two addresses that
         // differ only in bit 65 should be distinct, but differ only
         // in bit 66 should collapse.
-        let a = SourceKey::from_ip(
-            "2001:db8::8000:0:0:0".parse().unwrap(), 65);
-        let b = SourceKey::from_ip(
-            "2001:db8::C000:0:0:0".parse().unwrap(), 65);
+        let a = SourceKey::from_ip("2001:db8::8000:0:0:0".parse().unwrap(), 65);
+        let b = SourceKey::from_ip("2001:db8::C000:0:0:0".parse().unwrap(), 65);
         // a has bit 65 set (0x8000), b has bits 65 and 66 set (0xC000).
         // Both have bit 65 set, so under /65 they should be equal.
         assert_eq!(a, b);

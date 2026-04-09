@@ -9,18 +9,17 @@
 
 //! The public `RateLimiter` type and its core `check` algorithm.
 
-use std::net::IpAddr;
-use std::num::NonZeroUsize;
-use std::sync::Mutex;
-use std::time::Instant;
+use std::{net::IpAddr, num::NonZeroUsize, sync::Mutex, time::Instant};
 
 use fwknox_config::RateLimitSection;
 use lru::LruCache;
 
-use crate::bucket::{BucketDecision, TokenBucket};
-use crate::clock::{Clock, SystemClock};
-use crate::key::SourceKey;
-use crate::stats::{Stats, StatsSnapshot};
+use crate::{
+    bucket::{BucketDecision, TokenBucket},
+    clock::{Clock, SystemClock},
+    key::SourceKey,
+    stats::{Stats, StatsSnapshot},
+};
 
 /// The outcome of a single rate limiter check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +113,9 @@ impl RateLimiter {
         };
 
         let key = SourceKey::from_ip(src_ip, self.config.ipv6_prefix_len);
-        let mut inner = mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut inner = mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let now = inner.clock.now();
 
         // Tier 1: exact-tracked hot source.
@@ -154,7 +155,9 @@ impl RateLimiter {
 #[cfg(test)]
 impl RateLimiter {
     fn insert_tracked_for_test(&self, src_ip: IpAddr) {
-        let Some(ref mutex) = self.inner else { panic!("disabled") };
+        let Some(ref mutex) = self.inner else {
+            panic!("disabled")
+        };
         let mut inner = mutex.lock().unwrap();
         let now = inner.clock.now();
         let key = SourceKey::from_ip(src_ip, self.config.ipv6_prefix_len);
@@ -169,9 +172,10 @@ impl RateLimiter {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::MockClock;
-    use std::time::Duration;
 
     fn default_config() -> RateLimitSection {
         RateLimitSection::default()
@@ -187,10 +191,7 @@ mod tests {
     fn disabled_mode_always_passes() {
         let limiter = RateLimiter::from_config(&disabled_config());
         for _ in 0..100 {
-            assert_eq!(
-                limiter.check("1.2.3.4".parse().unwrap()),
-                Decision::Pass
-            );
+            assert_eq!(limiter.check("1.2.3.4".parse().unwrap()), Decision::Pass);
         }
         let snap = limiter.stats();
         assert_eq!(snap.allowed, 100);
@@ -201,25 +202,21 @@ mod tests {
     #[test]
     fn disabled_mode_has_no_inner_state() {
         let limiter = RateLimiter::from_config(&disabled_config());
-        assert!(limiter.inner.is_none(),
-            "disabled limiter must not allocate the LRUs or global bucket");
+        assert!(
+            limiter.inner.is_none(),
+            "disabled limiter must not allocate the LRUs or global bucket"
+        );
     }
 
     #[test]
     fn enabled_mode_constructs_with_inner_state() {
-        let limiter = RateLimiter::with_clock(
-            &default_config(),
-            Box::new(MockClock::new()),
-        );
+        let limiter = RateLimiter::with_clock(&default_config(), Box::new(MockClock::new()));
         assert!(limiter.inner.is_some());
     }
 
     #[test]
     fn stats_snapshot_starts_at_zero() {
-        let limiter = RateLimiter::with_clock(
-            &default_config(),
-            Box::new(MockClock::new()),
-        );
+        let limiter = RateLimiter::with_clock(&default_config(), Box::new(MockClock::new()));
         let snap = limiter.stats();
         assert_eq!(snap, StatsSnapshot::default());
     }
@@ -237,7 +234,10 @@ mod tests {
         for i in 0..20 {
             assert_eq!(limiter.check(ip), Decision::Pass, "packet {i}");
         }
-        assert_eq!(limiter.check(ip), Decision::Drop(DropReason::PerSourceExhausted));
+        assert_eq!(
+            limiter.check(ip),
+            Decision::Drop(DropReason::PerSourceExhausted)
+        );
         let snap = limiter.stats();
         assert_eq!(snap.allowed, 20);
         assert_eq!(snap.dropped_per_source, 1);
@@ -257,13 +257,19 @@ mod tests {
         for _ in 0..20 {
             limiter.check(ip);
         }
-        assert_eq!(limiter.check(ip), Decision::Drop(DropReason::PerSourceExhausted));
+        assert_eq!(
+            limiter.check(ip),
+            Decision::Drop(DropReason::PerSourceExhausted)
+        );
         // Advance 1 second: rate=10 → 10 more tokens, capped at burst=20.
         clock.advance(Duration::from_secs(1));
         for _ in 0..10 {
             assert_eq!(limiter.check(ip), Decision::Pass);
         }
-        assert_eq!(limiter.check(ip), Decision::Drop(DropReason::PerSourceExhausted));
+        assert_eq!(
+            limiter.check(ip),
+            Decision::Drop(DropReason::PerSourceExhausted)
+        );
     }
 
     /// `Box<dyn Clock>` can't be cloned, and multiple test call-sites need

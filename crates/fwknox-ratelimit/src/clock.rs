@@ -6,8 +6,10 @@
 //! `Instant::now()`. Tests and integration harnesses use
 //! [`MockClock`], which returns a manually-advanced fixed time.
 
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 /// A monotonic time source.
 ///
