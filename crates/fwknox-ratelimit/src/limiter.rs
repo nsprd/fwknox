@@ -497,6 +497,100 @@ mod tests {
         );
     }
 
+    #[test]
+    fn fresh_source_end_to_end_25_pass_75_drop() {
+        // Spec test 3: a fresh source sends 100 packets at T0 with no
+        // clock advance. Expected:
+        //   - 5 pass via global bucket → promotion fires
+        //   - 20 pass via newly-created per-source bucket (burst)
+        //   - 75 drop with dropped_per_source
+        // Total: allowed=25, dropped_per_source=75, promotions=1.
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let mut passes = 0u32;
+        let mut per_source_drops = 0u32;
+        let mut global_drops = 0u32;
+        for _ in 0..100 {
+            match limiter.check(ip) {
+                Decision::Pass => passes += 1,
+                Decision::Drop(DropReason::PerSourceExhausted) => per_source_drops += 1,
+                Decision::Drop(DropReason::GlobalExhausted) => global_drops += 1,
+            }
+        }
+        assert_eq!(passes, 25);
+        assert_eq!(per_source_drops, 75);
+        assert_eq!(global_drops, 0);
+        let snap = limiter.stats();
+        assert_eq!(snap.allowed, 25);
+        assert_eq!(snap.dropped_per_source, 75);
+        assert_eq!(snap.dropped_global, 0);
+        assert_eq!(snap.promotions, 1);
+    }
+
+    #[test]
+    fn ipv6_slash_64_collapses_distinct_addresses_to_one_source() {
+        // Spec test 10: send packets from 64 distinct addresses within
+        // 2001:db8::/64. Under /64 masking they must all key to the same
+        // source. Expected behavior matches test 3: 25 pass, 75 drop.
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        let mut passes = 0u32;
+        let mut drops = 0u32;
+        // Send 100 packets total, rotating through 64 /128 addresses in
+        // the same /64. The first 25 should pass (5 via global promoting
+        // the masked /64 key, then 20 via the resulting per-source bucket).
+        for i in 0..100u32 {
+            let ip: IpAddr = format!("2001:db8::{:x}", i % 64).parse().unwrap();
+            match limiter.check(ip) {
+                Decision::Pass => passes += 1,
+                Decision::Drop(_) => drops += 1,
+            }
+        }
+        assert_eq!(passes, 25, "IPv6 /64 masking must collapse all to one");
+        assert_eq!(drops, 75);
+        let snap = limiter.stats();
+        assert_eq!(
+            snap.promotions, 1,
+            "exactly one masked key should have promoted"
+        );
+    }
+
+    #[test]
+    fn ipv4_distinct_sources_keep_independent_buckets() {
+        // Counterpoint to the IPv6 test: two distinct IPv4 sources should
+        // each pass `per_source_burst` packets independently.
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        let a: IpAddr = "10.0.0.1".parse().unwrap();
+        let b: IpAddr = "10.0.0.2".parse().unwrap();
+        // Burn through a's quota entirely: 5 global + 20 per-source = 25.
+        for _ in 0..25 {
+            assert_eq!(limiter.check(a), Decision::Pass);
+        }
+        assert_eq!(
+            limiter.check(a),
+            Decision::Drop(DropReason::PerSourceExhausted)
+        );
+        // b is independent: should still have its full 25-packet budget.
+        for _ in 0..25 {
+            assert_eq!(limiter.check(b), Decision::Pass);
+        }
+        assert_eq!(
+            limiter.check(b),
+            Decision::Drop(DropReason::PerSourceExhausted)
+        );
+    }
+
     /// `Box<dyn Clock>` can't be cloned, and multiple test call-sites need
     /// to share the same underlying `MockClock`. This wrapper holds an
     /// `Arc<MockClock>` and implements `Clock` so both the test code and
