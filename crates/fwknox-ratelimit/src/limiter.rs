@@ -134,11 +134,17 @@ impl RateLimiter {
             };
         }
 
-        // Tier 2 and promotion land in Tasks 10 and 11. For now, sources
-        // not in the tracked LRU pass through without being counted against
-        // the global bucket — this means Task 8's disabled-mode and Task 9's
-        // tracked-source tests all pass, but Task 10 tests will fail until
-        // the Tier 2 path is implemented.
+        // Tier 2: global fallback bucket.
+        match inner.global.consume(now) {
+            BucketDecision::Drop => {
+                self.stats.incr_dropped_global();
+                return Decision::Drop(DropReason::GlobalExhausted);
+            }
+            BucketDecision::Pass => {}
+        }
+
+        // Promotion flow lands in Task 11. For now, packets that pass the
+        // global bucket just pass through.
         self.stats.incr_allowed();
         Decision::Pass
     }
@@ -270,6 +276,57 @@ mod tests {
             limiter.check(ip),
             Decision::Drop(DropReason::PerSourceExhausted)
         );
+    }
+
+    #[test]
+    fn global_bucket_absorbs_first_contact_packets() {
+        // 100 distinct sources, 1 packet each within 1 second. With the
+        // default global_burst=1000, all should pass. None should promote
+        // yet (threshold=5, each source only sends one packet).
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        for i in 0..100u32 {
+            let ip: IpAddr = format!("10.0.{}.{}", i / 256, i % 256).parse().unwrap();
+            assert_eq!(limiter.check(ip), Decision::Pass, "source {i}");
+        }
+        let snap = limiter.stats();
+        assert_eq!(snap.allowed, 100);
+        assert_eq!(snap.dropped_global, 0);
+        // Promotion is not yet implemented (Task 11), so promotions==0.
+        assert_eq!(snap.promotions, 0);
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation)] // `i / 256` and `i % 256` both fit in u8 for i < 10_000
+    #[allow(clippy::match_wildcard_for_single_variants)] // defensive: panic on any unexpected drop reason
+    fn global_bucket_drops_overflow() {
+        // Default global_burst=1000. Send 10_000 distinct sources as fast
+        // as possible — only 1000 should pass.
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        let mut passes = 0u32;
+        let mut drops = 0u32;
+        for i in 0..10_000u32 {
+            // Use /16 of 10.x.x.x — that's plenty unique.
+            let octet2 = (i / 256) as u8;
+            let octet3 = (i % 256) as u8;
+            let ip: IpAddr = format!("10.0.{octet2}.{octet3}").parse().unwrap();
+            match limiter.check(ip) {
+                Decision::Pass => passes += 1,
+                Decision::Drop(DropReason::GlobalExhausted) => drops += 1,
+                other => panic!("unexpected: {other:?}"),
+            }
+        }
+        assert_eq!(passes, 1000);
+        assert_eq!(drops, 9000);
+        let snap = limiter.stats();
+        assert_eq!(snap.dropped_global, 9000);
     }
 
     /// `Box<dyn Clock>` can't be cloned, and multiple test call-sites need
