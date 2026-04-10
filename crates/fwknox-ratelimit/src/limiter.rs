@@ -429,6 +429,74 @@ mod tests {
         assert_eq!(snap.allowed, u64::from(threshold));
     }
 
+    fn tiny_tracked_config() -> RateLimitSection {
+        // Tiny tracked LRU to make eviction testing trivial.
+        let mut c = default_config();
+        c.tracked_sources_capacity = 3;
+        // Lower promotion threshold so the test doesn't need to send 5
+        // packets per source just to get them tracked.
+        c.promotion_threshold = 1;
+        c
+    }
+
+    #[test]
+    fn tracked_lru_evicts_least_recently_used_when_full() {
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &tiny_tracked_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        // Promote 3 sources. With promotion_threshold=1, each promotes on
+        // its first packet.
+        let a: IpAddr = "10.0.0.1".parse().unwrap();
+        let b: IpAddr = "10.0.0.2".parse().unwrap();
+        let c: IpAddr = "10.0.0.3".parse().unwrap();
+        assert_eq!(limiter.check(a), Decision::Pass);
+        assert_eq!(limiter.check(b), Decision::Pass);
+        assert_eq!(limiter.check(c), Decision::Pass);
+        assert_eq!(limiter.stats().promotions, 3);
+        assert_eq!(limiter.stats().evictions, 0);
+        // Promote a 4th — must evict the LRU (which is `a`).
+        let d: IpAddr = "10.0.0.4".parse().unwrap();
+        assert_eq!(limiter.check(d), Decision::Pass);
+        assert_eq!(limiter.stats().promotions, 4);
+        assert_eq!(limiter.stats().evictions, 1);
+    }
+
+    #[test]
+    fn lru_refresh_keeps_hot_sources_warm() {
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &tiny_tracked_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        let a: IpAddr = "10.0.0.1".parse().unwrap();
+        let b: IpAddr = "10.0.0.2".parse().unwrap();
+        let c: IpAddr = "10.0.0.3".parse().unwrap();
+        limiter.check(a);
+        limiter.check(b);
+        limiter.check(c);
+        // Touch `a` again — it becomes MRU; `b` is now the LRU.
+        limiter.check(a);
+        // Promote a 4th. Eviction target must be `b`, NOT `a`.
+        let d: IpAddr = "10.0.0.4".parse().unwrap();
+        limiter.check(d);
+        // Verify: `a` still behaves as tracked (would need another tracked
+        // hit to confirm). Easiest proof: `a`'s per-source bucket was drained
+        // by an earlier check, and re-hits still go through the tracked
+        // path. We can't directly inspect the LRU, but we can verify that
+        // an attempt to promote `b` (by calling it again) succeeds, which
+        // only happens if `b` was evicted.
+        let stats_before = limiter.stats();
+        limiter.check(b);
+        let stats_after = limiter.stats();
+        assert_eq!(
+            stats_after.promotions,
+            stats_before.promotions + 1,
+            "b should have been re-promoted, proving it was evicted"
+        );
+    }
+
     /// `Box<dyn Clock>` can't be cloned, and multiple test call-sites need
     /// to share the same underlying `MockClock`. This wrapper holds an
     /// `Arc<MockClock>` and implements `Clock` so both the test code and
