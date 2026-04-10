@@ -591,6 +591,42 @@ mod tests {
         );
     }
 
+    #[test]
+    fn poisoned_mutex_is_recovered() {
+        use std::{
+            panic::{catch_unwind, AssertUnwindSafe},
+            sync::Arc,
+        };
+
+        let limiter = Arc::new(RateLimiter::with_clock(
+            &default_config(),
+            Box::new(MockClock::new()),
+        ));
+
+        // Force-poison the mutex by panicking while holding the lock. We
+        // do this via a spawned thread so the panic doesn't propagate to
+        // the test runner.
+        let poisoner_limiter = limiter.clone();
+        let handle = std::thread::spawn(move || {
+            let Some(ref mutex) = poisoner_limiter.inner else {
+                return;
+            };
+            let _guard = mutex.lock().unwrap();
+            panic!("deliberate poison");
+        });
+        // The panic is expected; we don't care about the error.
+        let _ = handle.join();
+
+        // At this point the mutex is poisoned. `check` must still return
+        // a Decision via the unwrap_or_else(into_inner) recovery.
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            limiter.check("10.0.0.1".parse().unwrap())
+        }));
+        assert!(result.is_ok(), "check must not panic on a poisoned mutex");
+        // Further checks should also work.
+        let _ = limiter.check("10.0.0.2".parse().unwrap());
+    }
+
     /// `Box<dyn Clock>` can't be cloned, and multiple test call-sites need
     /// to share the same underlying `MockClock`. This wrapper holds an
     /// `Arc<MockClock>` and implements `Clock` so both the test code and
