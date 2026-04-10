@@ -119,7 +119,6 @@ impl RateLimiter {
         let now = inner.clock.now();
 
         // Tier 1: exact-tracked hot source.
-        // `get_mut` moves the entry to MRU on access.
         if let Some(bucket) = inner.tracked.get_mut(&key) {
             let decision = bucket.consume(now);
             return match decision {
@@ -139,12 +138,45 @@ impl RateLimiter {
             BucketDecision::Drop => {
                 self.stats.incr_dropped_global();
                 return Decision::Drop(DropReason::GlobalExhausted);
+                // NOTE: Option A — rejected traffic does not increment the
+                // candidate counter. This is the load-bearing invariant.
             }
             BucketDecision::Pass => {}
         }
 
-        // Promotion flow lands in Task 11. For now, packets that pass the
-        // global bucket just pass through.
+        // Packet passed the global bucket. Bump the candidates counter and
+        // promote if the threshold is reached.
+        let new_count = if let Some(count) = inner.candidates.get_mut(&key) {
+            *count += 1;
+            *count
+        } else {
+            // `push` on an LruCache returns Some((k, v)) if a value was
+            // evicted due to capacity. We don't care — the evicted
+            // candidate just loses its partial progress, which is fine.
+            inner.candidates.push(key, 1);
+            1
+        };
+
+        if new_count >= self.config.promotion_threshold {
+            let bucket = TokenBucket::new(
+                self.config.per_source_rate_per_sec,
+                self.config.per_source_burst,
+                now,
+            );
+            inner.candidates.pop(&key);
+            // `push` on the tracked LRU tells us whether we evicted. The
+            // distinguishing check: if `push` returns Some((k, _)) and the
+            // returned key *differs* from the one we just pushed, it's a
+            // capacity eviction (not a key replacement — which is
+            // impossible here because we just popped the candidate).
+            if let Some((evicted_key, _)) = inner.tracked.push(key, bucket) {
+                if evicted_key != key {
+                    self.stats.incr_evictions();
+                }
+            }
+            self.stats.incr_promotions();
+        }
+
         self.stats.incr_allowed();
         Decision::Pass
     }
@@ -327,6 +359,74 @@ mod tests {
         assert_eq!(drops, 9000);
         let snap = limiter.stats();
         assert_eq!(snap.dropped_global, 9000);
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation)]
+    fn rejected_global_bucket_packets_do_not_promote() {
+        // Critical Option A invariant: under an active flood where the
+        // global bucket is drained, a fresh source hammering the limiter
+        // must NOT accumulate promotion credit.
+        //
+        // The flood is modeled as 1005 distinct source IPs each sending
+        // exactly one packet. None individually reach promotion_threshold
+        // (each sends 1 packet, threshold is 5), so no flooder self-
+        // promotes; every packet goes through the global bucket. The
+        // first 1000 pass and drain the bucket; the last 5 drop with
+        // GlobalExhausted.
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        // Drain the global bucket with 1005 distinct flooders. Use the
+        // 10.1.0.0/16 subnet (65k addresses available, non-overlapping
+        // with the fresh source's 10.0.0.42).
+        for i in 0..1005u32 {
+            let octet2 = (i / 256) as u8;
+            let octet3 = (i % 256) as u8;
+            let flooder: IpAddr = format!("10.1.{octet2}.{octet3}").parse().unwrap();
+            limiter.check(flooder);
+        }
+        // Fresh source sends promotion_threshold*10 packets. With no
+        // clock advance, the global bucket stays empty; every packet is
+        // rejected and the candidates counter should stay at zero.
+        let fresh: IpAddr = "10.0.0.42".parse().unwrap();
+        let threshold = default_config().promotion_threshold;
+        for _ in 0..(threshold * 10) {
+            assert_eq!(
+                limiter.check(fresh),
+                Decision::Drop(DropReason::GlobalExhausted),
+                "fresh source must be rejected when global is drained"
+            );
+        }
+        let snap = limiter.stats();
+        assert_eq!(snap.promotions, 0, "rejected packets must not promote");
+        // Fresh source must still be rejected from the global path, proving
+        // it was never promoted into the tracked LRU.
+        assert_eq!(
+            limiter.check(fresh),
+            Decision::Drop(DropReason::GlobalExhausted),
+        );
+    }
+
+    #[test]
+    fn successful_global_bucket_consumptions_promote_at_threshold() {
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let threshold = default_config().promotion_threshold;
+        // Send exactly `threshold` packets. Global has 1000 tokens, so all
+        // pass. The threshold-th packet triggers promotion.
+        for _ in 0..threshold {
+            assert_eq!(limiter.check(ip), Decision::Pass);
+        }
+        let snap = limiter.stats();
+        assert_eq!(snap.promotions, 1);
+        assert_eq!(snap.allowed, u64::from(threshold));
     }
 
     /// `Box<dyn Clock>` can't be cloned, and multiple test call-sites need
