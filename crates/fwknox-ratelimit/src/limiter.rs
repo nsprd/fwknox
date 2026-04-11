@@ -1,12 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// The skeleton populates `Inner` fields (tracked, candidates, global,
-// clock, last_global_drop_warn) in the constructor, but the no-op
-// `check` body doesn't read them until Tasks 9–11 wire up the real
-// algorithm. Suppress `dead_code` until then; Tasks 9+ will remove
-// this allow once every field is live.
-#![allow(dead_code)]
-
 //! The public `RateLimiter` type and its core `check` algorithm.
 
 use std::{net::IpAddr, num::NonZeroUsize, sync::Mutex, time::Instant};
@@ -57,6 +50,21 @@ struct Inner {
     /// Last time a global-bucket-drop warning was logged. Throttles
     /// warn-level spam on sustained floods.
     last_global_drop_warn: Option<Instant>,
+}
+
+/// Checks whether a warn-level log should be emitted for a drop,
+/// given the last-warn timestamp and the current time. Returns
+/// `true` if at least 1 second has elapsed (or this is the first
+/// drop). Mutates the timestamp to `now` if it returns `true`.
+fn should_warn_log(last: &mut Option<Instant>, now: Instant) -> bool {
+    const WARN_WINDOW: std::time::Duration = std::time::Duration::from_secs(1);
+    match *last {
+        Some(prev) if now.duration_since(prev) < WARN_WINDOW => false,
+        _ => {
+            *last = Some(now);
+            true
+        }
+    }
 }
 
 impl RateLimiter {
@@ -128,6 +136,17 @@ impl RateLimiter {
                 }
                 BucketDecision::Drop => {
                     self.stats.incr_dropped_per_source();
+                    if should_warn_log(&mut bucket.last_warn_log, now) {
+                        tracing::warn!(
+                            source = %src_ip,
+                            "rate limit: per-source bucket exhausted"
+                        );
+                    } else {
+                        tracing::debug!(
+                            source = %src_ip,
+                            "rate limit: per-source bucket exhausted"
+                        );
+                    }
                     Decision::Drop(DropReason::PerSourceExhausted)
                 }
             };
@@ -137,6 +156,17 @@ impl RateLimiter {
         match inner.global.consume(now) {
             BucketDecision::Drop => {
                 self.stats.incr_dropped_global();
+                if should_warn_log(&mut inner.last_global_drop_warn, now) {
+                    tracing::warn!(
+                        source = %src_ip,
+                        "rate limit: global bucket exhausted"
+                    );
+                } else {
+                    tracing::debug!(
+                        source = %src_ip,
+                        "rate limit: global bucket exhausted"
+                    );
+                }
                 return Decision::Drop(DropReason::GlobalExhausted);
                 // NOTE: Option A — rejected traffic does not increment the
                 // candidate counter. This is the load-bearing invariant.
@@ -625,6 +655,91 @@ mod tests {
         assert!(result.is_ok(), "check must not panic on a poisoned mutex");
         // Further checks should also work.
         let _ = limiter.check("10.0.0.2".parse().unwrap());
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation)]
+    fn global_drop_warn_throttle_state_updates_on_first_drop() {
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        // Drain global using 1005 DISTINCT flooder IPs (each sending one
+        // packet so nobody self-promotes — same fix as Task 11's
+        // rejected_global_bucket_packets_do_not_promote).
+        for i in 0..1005u32 {
+            let octet2 = (i / 256) as u8;
+            let octet3 = (i % 256) as u8;
+            let flooder: IpAddr = format!("10.1.{octet2}.{octet3}").parse().unwrap();
+            limiter.check(flooder);
+        }
+        // At this point a global drop has occurred; last_global_drop_warn
+        // should be set.
+        {
+            let inner = limiter.inner.as_ref().unwrap().lock().unwrap();
+            assert!(
+                inner.last_global_drop_warn.is_some(),
+                "first global drop must update the warn-throttle timestamp"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::cast_possible_truncation)]
+    fn global_drop_warn_throttle_does_not_update_more_than_once_per_second() {
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        );
+        // First, drain global with 1005 distinct flooders.
+        for i in 0..1005u32 {
+            let octet2 = (i / 256) as u8;
+            let octet3 = (i % 256) as u8;
+            let flooder: IpAddr = format!("10.1.{octet2}.{octet3}").parse().unwrap();
+            limiter.check(flooder);
+        }
+        let first_ts = {
+            let inner = limiter.inner.as_ref().unwrap().lock().unwrap();
+            inner.last_global_drop_warn.unwrap()
+        };
+        // More drops within the same mock-clock instant: timestamp must
+        // not update (would indicate a second warn log was emitted). Use
+        // a different fresh source so we don't accidentally promote it
+        // via Tier 1.
+        let fresh: IpAddr = "10.0.0.42".parse().unwrap();
+        for _ in 0..100 {
+            limiter.check(fresh);
+        }
+        let second_ts = {
+            let inner = limiter.inner.as_ref().unwrap().lock().unwrap();
+            inner.last_global_drop_warn.unwrap()
+        };
+        assert_eq!(
+            first_ts, second_ts,
+            "warn throttle must suppress subsequent logs within 1s"
+        );
+        // Advance 1.1 seconds — global bucket refills by ~550 tokens.
+        clock.advance(Duration::from_millis(1100));
+        // Drain the refilled tokens with another mini-flood so the next
+        // drop actually happens, at a time >1s after first_ts. Use a
+        // fresh subnet (10.2.x.y) to avoid colliding with the earlier
+        // flooder pool.
+        for i in 0..600u32 {
+            let octet2 = (i / 256) as u8;
+            let octet3 = (i % 256) as u8;
+            let drainer: IpAddr = format!("10.2.{octet2}.{octet3}").parse().unwrap();
+            limiter.check(drainer);
+        }
+        let third_ts = {
+            let inner = limiter.inner.as_ref().unwrap().lock().unwrap();
+            inner.last_global_drop_warn.unwrap()
+        };
+        assert!(
+            third_ts > second_ts,
+            "after 1s the next drop must re-fire the warn log"
+        );
     }
 
     /// `Box<dyn Clock>` can't be cloned, and multiple test call-sites need
