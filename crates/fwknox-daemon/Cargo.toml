@@ -30,6 +30,7 @@ fwknox-config.workspace = true
 fwknox-firewall.workspace = true
 fwknox-privsep.workspace = true
 fwknox-proto.workspace = true
+fwknox-ratelimit.workspace = true
 nix.workspace = true
 fwknox-replay.workspace = true
 fwknox-sandbox.workspace = true

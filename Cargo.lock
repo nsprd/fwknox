@@ -282,6 +282,7 @@ dependencies = [
  "fwknox-firewall",
  "fwknox-privsep",
  "fwknox-proto",
+ "fwknox-ratelimit",
  "fwknox-replay",
  "fwknox-sandbox",
  "libc",
@@ -316,6 +317,7 @@ dependencies = [
  "fwknox-daemon",
  "fwknox-firewall",
  "fwknox-proto",
+ "fwknox-ratelimit",
  "fwknox-replay",
  "tempfile",
 ]

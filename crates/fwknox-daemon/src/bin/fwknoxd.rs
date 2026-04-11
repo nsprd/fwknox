@@ -6,9 +6,10 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use fwknox_capture::UdpCapture;
-use fwknox_config::{load_daemon_config, FirewallBackend as ConfigBackend};
+use fwknox_config::{load_daemon_config, FirewallBackend as ConfigBackend, RateLimitSection};
 use fwknox_daemon::{run, Cli, DaemonError, ShutdownSignal};
 use fwknox_firewall::{FirewallBackend, NftablesBackend};
+use fwknox_ratelimit::RateLimiter;
 use fwknox_replay::ReplayCache;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -89,16 +90,39 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
         info!("sandbox disabled in config");
     }
 
-    // Step 6: dispatch to privsep or single-process mode.
+    // Step 6: construct a placeholder rate limiter. Task 17 wires the
+    // limiter parameter through both run loops; Task 18 replaces this
+    // placeholder with a limiter built from `config.rate_limit`.
+    let limiter_placeholder_cfg = RateLimitSection {
+        enabled: false,
+        ..RateLimitSection::default()
+    };
+    let limiter = RateLimiter::from_config(&limiter_placeholder_cfg);
+
+    // Step 7: dispatch to privsep or single-process mode.
     if config.daemon.enable_privsep {
         info!("running in privsep mode");
-        fwknox_daemon::privsep::run(&config, udp_socket, firewall.as_mut(), &replay, &shutdown)
+        fwknox_daemon::privsep::run(
+            &config,
+            udp_socket,
+            firewall.as_mut(),
+            &replay,
+            &limiter,
+            &shutdown,
+        )
     } else {
         info!("running in single-process mode (privsep disabled in config)");
         // Wrap udp_socket in a UdpCapture for the single-process run loop.
         let capture = UdpCapture::from_socket(udp_socket);
         shutdown.install_handlers()?;
-        run(&config, &capture, firewall.as_mut(), &replay, &shutdown)
+        run(
+            &config,
+            &capture,
+            firewall.as_mut(),
+            &replay,
+            &limiter,
+            &shutdown,
+        )
     }
 }
 

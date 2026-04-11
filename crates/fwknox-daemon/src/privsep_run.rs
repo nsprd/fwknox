@@ -29,6 +29,7 @@ use fwknox_privsep::{
     PrivsepError,
 };
 use fwknox_proto::SpaMessage;
+use fwknox_ratelimit::RateLimiter;
 use fwknox_replay::ReplayCache;
 use nix::unistd::{fork, ForkResult};
 use tracing::{debug, error, info, warn};
@@ -51,6 +52,7 @@ pub fn run(
     udp_socket: UdpSocket,
     firewall: &mut dyn FirewallBackend,
     replay: &ReplayCache,
+    limiter: &RateLimiter,
     shutdown: &ShutdownSignal,
 ) -> Result<(), DaemonError> {
     info!(
@@ -102,7 +104,7 @@ pub fn run(
                 eprintln!("capture worker: apply_worker_sandbox failed: {e}");
                 std::process::exit(1);
             }
-            let result = run_capture_worker(&udp_socket, &capture_writer, || {
+            let result = run_capture_worker(&udp_socket, &capture_writer, limiter, || {
                 local_shutdown.is_shutdown()
             });
             if let Err(e) = result {
