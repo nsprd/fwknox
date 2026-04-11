@@ -23,9 +23,13 @@ duration_suboptimal_units = "allow"
 
 [dependencies]
 fwknox-proto.workspace = true
+fwknox-ratelimit.workspace = true
 libc.workspace = true
 nix.workspace = true
 rmp-serde.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+fwknox-config.workspace = true

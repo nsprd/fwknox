@@ -324,7 +324,9 @@ dependencies = [
 name = "fwknox-privsep"
 version = "0.1.0"
 dependencies = [
+ "fwknox-config",
  "fwknox-proto",
+ "fwknox-ratelimit",
  "libc",
  "nix",
  "rmp-serde",

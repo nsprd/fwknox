@@ -11,6 +11,7 @@
 
 use std::{net::UdpSocket, os::unix::net::UnixDatagram, time::Duration};
 
+use fwknox_ratelimit::{Decision, RateLimiter};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -38,6 +39,7 @@ const CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 pub fn run_capture_worker<S>(
     udp_socket: &UdpSocket,
     to_crypto: &UnixDatagram,
+    limiter: &RateLimiter,
     mut is_shutdown: S,
 ) -> Result<(), PrivsepError>
 where
@@ -55,21 +57,32 @@ where
             return Ok(());
         }
         match udp_socket.recv_from(&mut buf) {
-            Ok((len, peer)) => {
-                debug!(
-                    len,
-                    peer = %peer,
-                    "capture worker: forwarding packet to crypto"
-                );
-                let msg = CaptureMsg::Packet {
-                    source_ip: peer.ip(),
-                    data: buf[..len].to_vec(),
-                };
-                if let Err(e) = send_msg(to_crypto, &msg) {
-                    warn!(error = %e, "capture worker: send to crypto failed; exiting");
-                    return Err(e);
+            Ok((len, peer)) => match limiter.check(peer.ip()) {
+                Decision::Pass => {
+                    debug!(
+                        len,
+                        peer = %peer,
+                        "capture worker: forwarding packet to crypto"
+                    );
+                    let msg = CaptureMsg::Packet {
+                        source_ip: peer.ip(),
+                        data: buf[..len].to_vec(),
+                    };
+                    if let Err(e) = send_msg(to_crypto, &msg) {
+                        warn!(error = %e, "capture worker: send to crypto failed; exiting");
+                        return Err(e);
+                    }
                 }
-            }
+                Decision::Drop(reason) => {
+                    // Rate-limited. The limiter already warn-logged
+                    // the first drop within its 1-second window.
+                    debug!(
+                        peer = %peer,
+                        reason = ?reason,
+                        "capture worker: dropping rate-limited packet"
+                    );
+                }
+            },
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
@@ -163,8 +176,14 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = Arc::clone(&shutdown);
 
+        let rl_cfg = fwknox_config::RateLimitSection {
+            enabled: false,
+            ..fwknox_config::RateLimitSection::default()
+        };
+        let test_limiter = fwknox_ratelimit::RateLimiter::from_config(&rl_cfg);
+
         let handle = thread::spawn(move || {
-            run_capture_worker(&server, &worker_end, || {
+            run_capture_worker(&server, &worker_end, &test_limiter, || {
                 shutdown_clone.load(Ordering::SeqCst)
             })
         });
@@ -200,8 +219,14 @@ mod tests {
         let shutdown = Arc::new(AtomicBool::new(true));
         let shutdown_clone = Arc::clone(&shutdown);
 
+        let rl_cfg = fwknox_config::RateLimitSection {
+            enabled: false,
+            ..fwknox_config::RateLimitSection::default()
+        };
+        let test_limiter = fwknox_ratelimit::RateLimiter::from_config(&rl_cfg);
+
         let handle = thread::spawn(move || {
-            run_capture_worker(&server, &worker_end, || {
+            run_capture_worker(&server, &worker_end, &test_limiter, || {
                 shutdown_clone.load(Ordering::SeqCst)
             })
         });
@@ -278,5 +303,73 @@ mod tests {
 
         let result = handle.join().unwrap();
         assert!(result.is_ok(), "worker returned error: {result:?}");
+    }
+
+    #[test]
+    fn capture_worker_drops_rate_limited_packets_before_ipc() {
+        use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+
+        use fwknox_config::RateLimitSection;
+        use fwknox_ratelimit::{MockClock, RateLimiter};
+
+        // Bind an ephemeral UDP socket for the capture worker to read from.
+        let udp = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let udp_addr = udp.local_addr().unwrap();
+
+        // Create the socketpair: capture worker writes to `worker_end`,
+        // our test reads from `parent_end`.
+        let (parent_end, worker_end) = crate::make_socketpair().unwrap();
+        parent_end
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+
+        // Strict rate limit config: burst=2, rate=1/sec, threshold=1 so
+        // sources promote on the first packet.
+        let rl_config = RateLimitSection {
+            per_source_rate_per_sec: 1,
+            per_source_burst: 2,
+            promotion_threshold: 1,
+            global_rate_per_sec: 10,
+            global_burst: 10,
+            ..RateLimitSection::default()
+        };
+        let limiter = RateLimiter::with_clock(&rl_config, Box::new(MockClock::new()));
+
+        // Shutdown flag so the worker exits once we've sent enough packets.
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_for_worker = Arc::clone(&shutdown);
+
+        // Spawn the worker in a thread.
+        let worker_handle = thread::spawn(move || {
+            run_capture_worker(&udp, &worker_end, &limiter, move || {
+                shutdown_for_worker.load(Ordering::Relaxed)
+            })
+        });
+
+        // Send 10 UDP packets from a fresh source. With burst=2 and
+        // threshold=1, the first packet passes via global + promotes, then
+        // the per-source bucket (starts at burst=2) passes 2 more, total 3.
+        let client = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        for _ in 0..10 {
+            client.send_to(b"hello", udp_addr).unwrap();
+        }
+
+        // Drain received messages from the parent end, with a short timeout.
+        let mut received = 0;
+        for _ in 0..20 {
+            match crate::ipc::recv_msg::<CaptureMsg>(&parent_end) {
+                Ok(CaptureMsg::Packet { .. }) => received += 1,
+                Err(_) => break, // timeout
+            }
+        }
+
+        // Signal worker shutdown and join.
+        shutdown.store(true, Ordering::Relaxed);
+        let _ = worker_handle.join();
+
+        assert_eq!(
+            received, 3,
+            "expected 3 packets to cross the IPC boundary (1 global-promote + 2 per-source burst), got {received}"
+        );
     }
 }
