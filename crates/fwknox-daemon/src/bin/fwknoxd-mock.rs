@@ -15,7 +15,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use fwknox_capture::UdpCapture;
-use fwknox_config::{load_daemon_config, RateLimitSection};
+use fwknox_config::load_daemon_config;
 use fwknox_daemon::{run, Cli, DaemonError, ShutdownSignal};
 use fwknox_firewall::{FirewallBackend, MockBackend};
 use fwknox_ratelimit::RateLimiter;
@@ -85,13 +85,12 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     // each fork child (Phase 6a Task 3), which is the actual thing
     // the integration test wants to validate.
 
-    // Placeholder rate limiter. Task 17 wires the parameter through;
-    // Task 18 replaces this with a limiter built from `config.rate_limit`.
-    let limiter_placeholder_cfg = RateLimitSection {
-        enabled: false,
-        ..RateLimitSection::default()
-    };
-    let limiter = RateLimiter::from_config(&limiter_placeholder_cfg);
+    // Construct the rate limiter from config.
+    let limiter = RateLimiter::from_config(&config.rate_limit);
+    tracing::info!(
+        enabled = config.rate_limit.enabled,
+        "rate limiter initialised (mock backend)"
+    );
 
     if config.daemon.enable_privsep {
         info!("running in privsep mode (mock backend)");

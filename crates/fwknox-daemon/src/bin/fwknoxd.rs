@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use fwknox_capture::UdpCapture;
-use fwknox_config::{load_daemon_config, FirewallBackend as ConfigBackend, RateLimitSection};
+use fwknox_config::{load_daemon_config, FirewallBackend as ConfigBackend};
 use fwknox_daemon::{run, Cli, DaemonError, ShutdownSignal};
 use fwknox_firewall::{FirewallBackend, NftablesBackend};
 use fwknox_ratelimit::RateLimiter;
@@ -90,14 +90,12 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
         info!("sandbox disabled in config");
     }
 
-    // Step 6: construct a placeholder rate limiter. Task 17 wires the
-    // limiter parameter through both run loops; Task 18 replaces this
-    // placeholder with a limiter built from `config.rate_limit`.
-    let limiter_placeholder_cfg = RateLimitSection {
-        enabled: false,
-        ..RateLimitSection::default()
-    };
-    let limiter = RateLimiter::from_config(&limiter_placeholder_cfg);
+    // Step 6: construct the rate limiter from config.
+    let limiter = RateLimiter::from_config(&config.rate_limit);
+    tracing::info!(
+        enabled = config.rate_limit.enabled,
+        "rate limiter initialised"
+    );
 
     // Step 7: dispatch to privsep or single-process mode.
     if config.daemon.enable_privsep {
