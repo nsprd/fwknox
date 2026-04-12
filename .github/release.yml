@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Categorizes auto-generated release notes by PR label and title prefix.
+# Applied when GitHub renders "Generate release notes" (used by the
+# release workflow's softprops/action-gh-release step).
+
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - dependencies-noop
+  categories:
+    - title: Security
+      labels: ['security']
+    - title: Breaking changes
+      labels: ['breaking-change']
+    - title: Features
+      labels: ['feature', 'enhancement']
+    - title: Bug fixes
+      labels: ['bug', 'fix']
+    - title: Documentation
+      labels: ['documentation', 'docs']
+    - title: Dependencies
+      labels: ['dependencies']
+    - title: Other changes
+      labels: ['*']
