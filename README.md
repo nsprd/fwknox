@@ -28,6 +28,7 @@ Port knocking hides services but uses a fragile sequence of connection attempts.
 
 - **Authenticated encryption.** AES-256-GCM + HMAC-SHA256, keys derived via HKDF-SHA256 from a single master key per access stanza.
 - **Replay protection.** Packet HMACs are cached on disk (`replay.cache`) and pruned on a timer.
+- **Per-source rate limiting.** Two-tier token-bucket limiter (exact per-source tracking for hot LRU entries, shared global fallback for everyone else) drops floods in the capture path before any crypto work runs. IPv6 sources are masked to a configurable prefix length.
 - **Clock-skew tolerant.** Packets carry a timestamp; old packets are rejected (`max_spa_packet_age`).
 - **Three-process privilege separation.** Unauthenticated packets are parsed by a sandboxed worker; authenticated requests are processed by a second sandboxed worker; only the parent touches the firewall. See [Architecture](#architecture).
 - **Sandboxed workers.** Both workers run under Landlock + seccomp-bpf. The seccomp filter allow-lists only the syscalls `libstd` needs for socket I/O.
@@ -54,7 +55,8 @@ fwknox does **not** defend against:
 - Kernel exploits against nftables or the netlink socket
 - Side channels in the firewall backend or libc
 - Physical attacks on the daemon host
-- DoS via packet floods (rate limiting is a future phase)
+- Application-layer DoS against a legitimate client's bucket (a flood from the same source IP will exhaust that source's token budget and get rate-limited, but a targeted attacker who can spoof the victim's source IP can also lock the victim out until their tokens refill)
+- Amplification or volumetric attacks at line rate — rate limiting bounds CPU cost but packets still arrive at the NIC
 
 The master key is the crown jewel. Treat it like an SSH host key.
 
@@ -161,6 +163,7 @@ The daemon reads `/etc/fwknox/fwknoxd.toml` by default. See `config/fwknoxd.toml
 
 - `[daemon]` — listen address, firewall backend, timeouts, privsep/sandbox toggles.
 - `[replay]` — replay cache location, pruning interval.
+- `[rate_limit]` — per-source + global token-bucket rates, burst sizes, hot-source promotion threshold, IPv6 prefix length.
 - `[[access]]` — one stanza per master key / source / port set. You can define many stanzas for different clients.
 
 Field schemas are the source of truth: see `crates/fwknox-config/src/daemon.rs` and `crates/fwknox-config/src/client.rs`.
