@@ -87,13 +87,27 @@ assets = [
     ["target/release/fwknoxd", "/usr/bin/fwknoxd", "755"],
     ["target/release/fwknox",  "/usr/bin/fwknox",  "755"],
     ["../../config/fwknoxd.toml.example", "/etc/fwknox/fwknoxd.toml.example", "644"],
-    ["../../dist/fwknoxd.service",        "/lib/systemd/system/fwknoxd.service", "644"],
     ["../../LICENSE",                     "/usr/share/doc/fwknox/LICENSE", "644"],
     ["../../README.md",                   "/usr/share/doc/fwknox/README.md", "644"],
 ]
 conf-files = [
     "/etc/fwknox/fwknoxd.toml.example",
 ]
+
+# cargo-deb auto-installs `<unit-scripts>/<unit-name>.service` at
+# /usr/lib/systemd/system/ — do not duplicate it in `assets` above.
+# `enable = false` / `start = false` are deliberate: a port-facing
+# daemon should not auto-start on package install before the operator
+# has written a config. After install, the operator runs:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now fwknoxd
+# (cargo-deb skips postinst generation entirely when both enable and
+# start are false, so the daemon-reload is on the operator.)
+[package.metadata.deb.systemd-units]
+unit-name = "fwknoxd"
+unit-scripts = "../../dist"
+enable = false
+start = false
 
 [package.metadata.generate-rpm]
 name = "fwknox"
