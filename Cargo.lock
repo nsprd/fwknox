@@ -282,6 +282,7 @@ dependencies = [
  "fwknox-firewall",
  "fwknox-privsep",
  "fwknox-proto",
+ "fwknox-ratelimit",
  "fwknox-replay",
  "fwknox-sandbox",
  "libc",
@@ -316,6 +317,7 @@ dependencies = [
  "fwknox-daemon",
  "fwknox-firewall",
  "fwknox-proto",
+ "fwknox-ratelimit",
  "fwknox-replay",
  "tempfile",
 ]
@@ -324,7 +326,9 @@ dependencies = [
 name = "fwknox-privsep"
 version = "0.1.0"
 dependencies = [
+ "fwknox-config",
  "fwknox-proto",
+ "fwknox-ratelimit",
  "libc",
  "nix",
  "rmp-serde",
@@ -344,6 +348,15 @@ dependencies = [
  "serde",
  "thiserror",
  "zeroize",
+]
+
+[[package]]
+name = "fwknox-ratelimit"
+version = "0.1.0"
+dependencies = [
+ "fwknox-config",
+ "lru",
+ "tracing",
 ]
 
 [[package]]

@@ -15,9 +15,10 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use clap::Parser;
 use fwknox_capture::UdpCapture;
 use fwknox_client::{build_spa_packet, send_udp_packet, Cli as ClientCli};
-use fwknox_config::load_daemon_config;
+use fwknox_config::{load_daemon_config, RateLimitSection};
 use fwknox_daemon::{run, ShutdownSignal};
 use fwknox_firewall::{AccessRule, FirewallBackend, FirewallError, MockBackend, RuleHandle};
+use fwknox_ratelimit::RateLimiter;
 use fwknox_replay::ReplayCache;
 
 /// A `FirewallBackend` wrapper that delegates to an inner `MockBackend`
@@ -104,6 +105,12 @@ fn client_sends_packet_daemon_installs_rule() {
     let mut firewall = RecordingFirewall::new();
     let installed_log = firewall.log_handle();
     let replay = ReplayCache::new();
+    // Disabled limiter: this test asserts end-to-end packet processing
+    // unaffected by rate limiting.
+    let limiter = RateLimiter::from_config(&RateLimitSection {
+        enabled: false,
+        ..RateLimitSection::default()
+    });
     let shutdown = ShutdownSignal::new();
 
     // Run the daemon in a worker thread.
@@ -115,6 +122,7 @@ fn client_sends_packet_daemon_installs_rule() {
             &capture,
             &mut firewall,
             &replay,
+            &limiter,
             &shutdown_for_thread,
         )
     });

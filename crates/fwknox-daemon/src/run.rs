@@ -7,6 +7,7 @@ use std::time::Duration;
 use fwknox_capture::CaptureBackend;
 use fwknox_config::DaemonConfig;
 use fwknox_firewall::FirewallBackend;
+use fwknox_ratelimit::{Decision, RateLimiter};
 use fwknox_replay::ReplayCache;
 use tracing::{debug, error, info, warn};
 
@@ -36,6 +37,7 @@ pub fn run(
     capture: &dyn CaptureBackend,
     firewall: &mut dyn FirewallBackend,
     replay: &ReplayCache,
+    limiter: &RateLimiter,
     shutdown: &ShutdownSignal,
 ) -> Result<(), DaemonError> {
     info!(
@@ -68,9 +70,18 @@ pub fn run(
         }
         match capture.recv_timeout(LOOP_TICK) {
             Ok(None) => {} // tick timeout — fall through to pruning + loop
-            Ok(Some(pkt)) => {
-                handle_packet(&pkt, config, replay, &*firewall);
-            }
+            Ok(Some(pkt)) => match limiter.check(pkt.source_ip) {
+                Decision::Pass => {
+                    handle_packet(&pkt, config, replay, &*firewall);
+                }
+                Decision::Drop(reason) => {
+                    debug!(
+                        source = %pkt.source_ip,
+                        reason = ?reason,
+                        "rate limit: dropped"
+                    );
+                }
+            },
             Err(e) => {
                 warn!(error = %e, "capture recv failed; continuing");
             }
@@ -159,11 +170,22 @@ mod tests {
 
     use base64::{engine::general_purpose::STANDARD as B64, Engine};
     use fwknox_capture::{CaptureError, CapturedPacket};
-    use fwknox_config::load_daemon_config;
+    use fwknox_config::{load_daemon_config, RateLimitSection};
     use fwknox_firewall::MockBackend;
     use fwknox_proto::{build_packet, PortProto, Protocol, SpaMessage, SpaPayload};
 
     use super::*;
+
+    /// Helper that builds a disabled rate limiter for tests that are not
+    /// exercising the limiter — they get pass-through behaviour so the
+    /// existing assertions remain valid.
+    fn disabled_limiter() -> RateLimiter {
+        let cfg = RateLimitSection {
+            enabled: false,
+            ..RateLimitSection::default()
+        };
+        RateLimiter::from_config(&cfg)
+    }
 
     /// In-memory capture that hands out a queue of pre-built packets.
     #[derive(Debug)]
@@ -245,6 +267,7 @@ require_source_match = true
         let capture = ScriptedCapture::new(vec![captured(wire)]);
         let mut firewall = MockBackend::new();
         let replay = ReplayCache::new();
+        let limiter = disabled_limiter();
         let shutdown = ShutdownSignal::new();
 
         // Trigger shutdown after a moment so the main loop has time to
@@ -255,7 +278,7 @@ require_source_match = true
             trigger.trigger();
         });
 
-        run(&cfg, &capture, &mut firewall, &replay, &shutdown).unwrap();
+        run(&cfg, &capture, &mut firewall, &replay, &limiter, &shutdown).unwrap();
 
         // After run() returns, the firewall has been flushed (so the
         // mock's installed_rules() reports empty), but the rule was
@@ -273,6 +296,7 @@ require_source_match = true
         let capture = ScriptedCapture::new(vec![]);
         let mut firewall = MockBackend::new();
         let replay = ReplayCache::new();
+        let limiter = disabled_limiter();
         let shutdown = ShutdownSignal::new();
 
         let trigger = shutdown.clone();
@@ -281,7 +305,67 @@ require_source_match = true
             trigger.trigger();
         });
 
-        run(&cfg, &capture, &mut firewall, &replay, &shutdown).unwrap();
+        run(&cfg, &capture, &mut firewall, &replay, &limiter, &shutdown).unwrap();
         assert_eq!(replay.len(), 0);
+    }
+
+    #[test]
+    fn non_privsep_run_loop_drops_rate_limited_packets() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        use fwknox_ratelimit::MockClock;
+
+        // Strict limit to make drops obvious.
+        let rl_config = RateLimitSection {
+            per_source_rate_per_sec: 1,
+            per_source_burst: 2,
+            promotion_threshold: 1,
+            global_rate_per_sec: 10,
+            global_burst: 10,
+            ..RateLimitSection::default()
+        };
+        let limiter = RateLimiter::with_clock(&rl_config, Box::new(MockClock::new()));
+
+        // 20 identical packets from the same source. The payload is
+        // garbage (not a valid SPA packet), so any packet that slips
+        // past the limiter will be classified as NoMatch by the
+        // pipeline — we only care about limiter stats here.
+        let src_ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let packets: Vec<CapturedPacket> = (0..20)
+            .map(|_| CapturedPacket {
+                source_ip: src_ip,
+                data: b"garbage-not-a-real-spa-packet".to_vec(),
+            })
+            .collect();
+        let capture = ScriptedCapture::new(packets);
+
+        // Minimal test config: reuse the same scaffolding the other
+        // tests use so we get a real DaemonConfig with an empty access
+        // list (every packet will NoMatch, but that's fine — the
+        // limiter dropped most of them before they ever reach the
+        // pipeline).
+        let key = [0x42u8; 32];
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = load_daemon_config(write_test_config(dir.path(), &key)).unwrap();
+
+        let mut firewall = MockBackend::new();
+        let replay = ReplayCache::new();
+        let shutdown = ShutdownSignal::new();
+
+        // Trip shutdown after a short delay — long enough for the
+        // scripted capture to drain its queue.
+        let trigger = shutdown.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            trigger.trigger();
+        });
+
+        run(&cfg, &capture, &mut firewall, &replay, &limiter, &shutdown).unwrap();
+
+        let snap = limiter.stats();
+        assert_eq!(snap.allowed, 3, "1 global + 2 per-source burst = 3 passes");
+        assert_eq!(snap.dropped_per_source, 17);
+        assert_eq!(snap.dropped_global, 0);
+        assert_eq!(snap.promotions, 1);
     }
 }

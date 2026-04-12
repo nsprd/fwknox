@@ -24,5 +24,6 @@ fwknox-config.workspace = true
 fwknox-daemon.workspace = true
 fwknox-firewall.workspace = true
 fwknox-proto.workspace = true
+fwknox-ratelimit.workspace = true
 fwknox-replay.workspace = true
 tempfile.workspace = true

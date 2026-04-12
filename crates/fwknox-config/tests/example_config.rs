@@ -27,4 +27,16 @@ fn example_daemon_config_parses() {
     assert_eq!(stanza.name, "ssh-from-anywhere");
     assert_eq!(stanza.source.len(), 1);
     assert_eq!(stanza.open_ports.0.len(), 1);
+
+    // [rate_limit]: the example documents every knob and its value must
+    // match the current defaults. If a default drifts without updating
+    // the example, this assertion fires loudly.
+    assert!(cfg.rate_limit.enabled);
+    assert_eq!(cfg.rate_limit.per_source_rate_per_sec, 10);
+    assert_eq!(cfg.rate_limit.per_source_burst, 20);
+    assert_eq!(cfg.rate_limit.tracked_sources_capacity, 1024);
+    assert_eq!(cfg.rate_limit.global_rate_per_sec, 500);
+    assert_eq!(cfg.rate_limit.global_burst, 1000);
+    assert_eq!(cfg.rate_limit.promotion_threshold, 5);
+    assert_eq!(cfg.rate_limit.ipv6_prefix_len, 64);
 }

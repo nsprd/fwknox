@@ -4,6 +4,7 @@ members = [
     "crates/fwknox-proto",
     "crates/fwknox-config",
     "crates/fwknox-replay",
+    "crates/fwknox-ratelimit",
     "crates/fwknox-firewall",
     "crates/fwknox-capture",
     "crates/fwknox-sandbox",
@@ -39,6 +40,7 @@ tempfile     = "3.27.0"
 fwknox-proto  = { path = "crates/fwknox-proto" }
 fwknox-config = { path = "crates/fwknox-config" }
 fwknox-replay   = { path = "crates/fwknox-replay" }
+fwknox-ratelimit = { path = "crates/fwknox-ratelimit" }
 fwknox-firewall = { path = "crates/fwknox-firewall" }
 fwknox-capture  = { path = "crates/fwknox-capture" }
 tracing         = "0.1.44"

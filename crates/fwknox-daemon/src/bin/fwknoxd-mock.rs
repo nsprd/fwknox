@@ -18,6 +18,7 @@ use fwknox_capture::UdpCapture;
 use fwknox_config::load_daemon_config;
 use fwknox_daemon::{run, Cli, DaemonError, ShutdownSignal};
 use fwknox_firewall::{FirewallBackend, MockBackend};
+use fwknox_ratelimit::RateLimiter;
 use fwknox_replay::ReplayCache;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -84,13 +85,34 @@ fn real_main(cli: &Cli) -> Result<(), DaemonError> {
     // each fork child (Phase 6a Task 3), which is the actual thing
     // the integration test wants to validate.
 
+    // Construct the rate limiter from config.
+    let limiter = RateLimiter::from_config(&config.rate_limit);
+    tracing::info!(
+        enabled = config.rate_limit.enabled,
+        "rate limiter initialised (mock backend)"
+    );
+
     if config.daemon.enable_privsep {
         info!("running in privsep mode (mock backend)");
-        fwknox_daemon::privsep::run(&config, udp_socket, firewall.as_mut(), &replay, &shutdown)
+        fwknox_daemon::privsep::run(
+            &config,
+            udp_socket,
+            firewall.as_mut(),
+            &replay,
+            &limiter,
+            &shutdown,
+        )
     } else {
         info!("running in single-process mode (mock backend)");
         let capture = UdpCapture::from_socket(udp_socket);
         shutdown.install_handlers()?;
-        run(&config, &capture, firewall.as_mut(), &replay, &shutdown)
+        run(
+            &config,
+            &capture,
+            firewall.as_mut(),
+            &replay,
+            &limiter,
+            &shutdown,
+        )
     }
 }
