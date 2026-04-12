@@ -25,13 +25,27 @@ env:
 
 jobs:
   build:
-    name: build release binaries
-    runs-on: ubuntu-latest
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux/arm64
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
 
       - name: Build release binaries
         run: cargo build --release --workspace --bins
@@ -42,33 +56,40 @@ jobs:
           cp target/release/fwknox  dist/fwknox
           cp target/release/fwknoxd dist/fwknoxd
           cp config/fwknoxd.toml.example dist/fwknoxd.toml.example
-          tar czf fwknox-${{ github.ref_name }}-x86_64-linux-gnu.tar.gz -C dist .
+          tar czf fwknox-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist .
 
-      - name: Upload dist directory
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist/
+          name: bin-${{ matrix.arch }}
+          path: dist/fwknox dist/fwknoxd
           retention-days: 1
 
-      - name: Upload release tarball
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: release-tarball
+          name: tarball-${{ matrix.arch }}
           path: fwknox-*.tar.gz
           retention-days: 1
 
   docker:
-    name: build and push release image
-    runs-on: ubuntu-latest
+    name: build and push image (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch built binaries
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: bin-${{ matrix.arch }}
           path: dist
 
       - name: Restore binary permissions
@@ -81,11 +102,49 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build and push per-arch image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  manifest:
+    name: assemble multi-arch manifest
+    runs-on: ubuntu-latest
+    needs: docker
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: release-digest-*
+          merge-multiple: true
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # metadata-action strips the leading "v" so v0.1.0 -> 0.1.0 and
       # emits major.minor + major rolling tags. :latest is only applied
       # on the default branch to avoid demoting a newer release if an
       # older-branch hotfix tag is pushed.
-      - name: Compute metadata
+      - name: Compute tags
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -96,27 +155,34 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Create and push manifest
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          set -euo pipefail
+          refs=""
+          for f in /tmp/digests/*; do
+            digest=$(cat "$f")
+            refs="$refs ${IMAGE}@${digest}"
+          done
+          for tag in $(jq -r '.tags[]' <<<"$DOCKER_METADATA_OUTPUT_JSON"); do
+            docker buildx imagetools create --tag "$tag" $refs
+          done
 
   release:
     name: create GitHub release
     runs-on: ubuntu-latest
-    needs: [build, docker]
+    needs: [build, manifest]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Fetch release tarball
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: release-tarball
+          path: release-assets
+          pattern: tarball-*
+          merge-multiple: true
 
       # Notes auto-generated from .github/release.yml categories applied
       # to PR titles merged since the previous tag. Prerelease flag is
@@ -127,4 +193,4 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
-          files: fwknox-*.tar.gz
+          files: release-assets/fwknox-*.tar.gz
