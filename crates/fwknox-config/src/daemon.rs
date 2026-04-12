@@ -2,14 +2,87 @@
 
 //! Server-side configuration: daemon settings + access stanzas.
 
-use std::{net::IpAddr, path::PathBuf, time::Duration};
+use std::{net::IpAddr, ops::Deref, path::PathBuf, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     error::ConfigError,
     shared::{Base64Key, PortProtoList, SourceSpec},
 };
+
+/// Maximum number of `source` entries accepted per `[[access]]` stanza
+/// at deserialize time. Bounds parse-time memory against pathological
+/// configs.
+pub const MAX_SOURCES_PER_STANZA: usize = 1024;
+
+/// Maximum number of `[[access]]` stanzas accepted in a daemon config
+/// at deserialize time.
+pub const MAX_ACCESS_STANZAS: usize = 256;
+
+/// A [`Vec<SourceSpec>`] that rejects oversize lists at deserialize
+/// time. Derefs to `[SourceSpec]` so existing call sites that iterate
+/// via `stanza.source.iter()` or index via `stanza.source[i]` keep
+/// working unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+#[serde(transparent)]
+pub struct BoundedSources(
+    /// The decoded list of source specs.
+    pub Vec<SourceSpec>,
+);
+
+impl Deref for BoundedSources {
+    type Target = [SourceSpec];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for BoundedSources {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        let v: Vec<SourceSpec> = Vec::deserialize(de)?;
+        if v.len() > MAX_SOURCES_PER_STANZA {
+            return Err(serde::de::Error::custom(format!(
+                "source list has {} entries, exceeds maximum of {}",
+                v.len(),
+                MAX_SOURCES_PER_STANZA
+            )));
+        }
+        Ok(Self(v))
+    }
+}
+
+/// A [`Vec<AccessStanza>`] that rejects oversize lists at deserialize
+/// time. Derefs to `[AccessStanza]` so existing call sites that pass
+/// `&config.access` to functions expecting `&[AccessStanza]` keep
+/// working via deref coercion.
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(transparent)]
+pub struct BoundedAccess(
+    /// The decoded list of access stanzas.
+    pub Vec<AccessStanza>,
+);
+
+impl Deref for BoundedAccess {
+    type Target = [AccessStanza];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for BoundedAccess {
+    fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        let v: Vec<AccessStanza> = Vec::deserialize(de)?;
+        if v.len() > MAX_ACCESS_STANZAS {
+            return Err(serde::de::Error::custom(format!(
+                "access list has {} stanzas, exceeds maximum of {}",
+                v.len(),
+                MAX_ACCESS_STANZAS
+            )));
+        }
+        Ok(Self(v))
+    }
+}
 
 /// Top-level structure of `fwknoxd.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,7 +99,7 @@ pub struct DaemonConfig {
     pub rate_limit: RateLimitSection,
     /// `[[access]]` stanzas.
     #[serde(default, rename = "access")]
-    pub access: Vec<AccessStanza>,
+    pub access: BoundedAccess,
 }
 
 /// The `[daemon]` section.
@@ -207,7 +280,7 @@ pub struct AccessStanza {
     /// Human-readable name for this stanza (must be unique within the config).
     pub name: String,
     /// List of allowed source specs (`any`, CIDR, or single IP).
-    pub source: Vec<SourceSpec>,
+    pub source: BoundedSources,
     /// Allowed `proto/port` pairs the client may request.
     pub open_ports: PortProtoList,
     /// 32-byte master key. The protocol crate's HKDF derives separate
@@ -323,7 +396,7 @@ impl DaemonConfig {
             ));
         }
         let mut seen_names = std::collections::HashSet::new();
-        for stanza in &self.access {
+        for stanza in self.access.iter() {
             if !seen_names.insert(stanza.name.as_str()) {
                 return Err(ConfigError::invalid(format!(
                     "duplicate access stanza name: {}",
@@ -371,11 +444,13 @@ impl DaemonConfig {
                 )));
             }
         }
+        self.validate_durations()?;
         if self.daemon.default_fw_timeout > self.daemon.max_fw_timeout {
             return Err(ConfigError::invalid(
                 "default_fw_timeout must be <= max_fw_timeout",
             ));
         }
+        self.validate_replay_cache_path()?;
         // Rate limit validation. Only enforce when enabled — if the operator
         // set enabled=false they've opted out explicitly and the numeric
         // values are ignored.
@@ -410,6 +485,46 @@ impl DaemonConfig {
             }
             if !(1..=128).contains(&self.rate_limit.ipv6_prefix_len) {
                 return Err(ConfigError::invalid("ipv6_prefix_len must be in 1..=128"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reject zero / absurdly-large durations for every duration field the
+    /// daemon uses to bound rule lifetime or packet age. A zero value either
+    /// makes rules expire instantly or disables age checks entirely; values
+    /// past seven days are almost certainly operator error rather than intent.
+    fn validate_durations(&self) -> Result<(), ConfigError> {
+        let max_duration = Duration::from_secs(86_400 * 7);
+        for (name, d) in [
+            ("daemon.default_fw_timeout", self.daemon.default_fw_timeout),
+            ("daemon.max_fw_timeout", self.daemon.max_fw_timeout),
+            ("daemon.max_spa_packet_age", self.daemon.max_spa_packet_age),
+            ("replay.max_age", self.replay.max_age),
+        ] {
+            if d.is_zero() {
+                return Err(ConfigError::invalid(format!("{name} must be > 0")));
+            }
+            if d > max_duration {
+                return Err(ConfigError::invalid(format!("{name} must be <= 7 days")));
+            }
+        }
+        Ok(())
+    }
+
+    /// Replay-cache path must be absolute and must not contain `..`
+    /// components. The daemon runs after `chdir("/")` inside a Landlock
+    /// sandbox so relative paths are meaningless, and `..` traversal could
+    /// escape the directory the sandbox is configured to permit.
+    fn validate_replay_cache_path(&self) -> Result<(), ConfigError> {
+        if !self.replay.cache_path.is_absolute() {
+            return Err(ConfigError::invalid("replay.cache_path must be absolute"));
+        }
+        for comp in self.replay.cache_path.components() {
+            if matches!(comp, std::path::Component::ParentDir) {
+                return Err(ConfigError::invalid(
+                    "replay.cache_path must not contain '..'",
+                ));
             }
         }
         Ok(())
@@ -755,6 +870,210 @@ master_key_base64 = "{}"
         let cfg: DaemonConfig = toml::from_str(&body).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("per_source_rate_per_sec"));
+    }
+
+    #[test]
+    fn oversize_source_list_is_rejected() {
+        // Build a source list with MAX_SOURCES_PER_STANZA + 1 entries.
+        // Reusing the same "any" literal is fine — serde still
+        // deserializes the full Vec before the length check fires.
+        let n = MAX_SOURCES_PER_STANZA + 1;
+        let sources = (0..n)
+            .map(|_| "\"any\"".to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let body = format!(
+            r#"
+[daemon]
+[replay]
+
+[[access]]
+name = "big"
+source = [{sources}]
+open_ports = ["tcp/22"]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        );
+        let err = toml::from_str::<DaemonConfig>(&body).unwrap_err();
+        assert!(
+            err.to_string().contains("source list"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn source_list_at_max_is_accepted() {
+        // Boundary: exactly MAX_SOURCES_PER_STANZA must parse.
+        let sources = (0..MAX_SOURCES_PER_STANZA)
+            .map(|_| "\"any\"".to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let body = format!(
+            r#"
+[daemon]
+[replay]
+
+[[access]]
+name = "at-max"
+source = [{sources}]
+open_ports = ["tcp/22"]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        );
+        let cfg: DaemonConfig = toml::from_str(&body).unwrap();
+        assert_eq!(cfg.access[0].source.len(), MAX_SOURCES_PER_STANZA);
+    }
+
+    #[test]
+    fn oversize_ports_list_is_rejected() {
+        use crate::shared::MAX_PORTS_PER_STANZA;
+        let n = MAX_PORTS_PER_STANZA + 1;
+        let ports = (0..n)
+            .map(|_| "\"tcp/22\"".to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let body = format!(
+            r#"
+[daemon]
+[replay]
+
+[[access]]
+name = "big"
+source = ["any"]
+open_ports = [{ports}]
+master_key_base64 = "{}"
+"#,
+            b64(&[0x11; 32]),
+        );
+        let err = toml::from_str::<DaemonConfig>(&body).unwrap_err();
+        assert!(
+            err.to_string().contains("open_ports list"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn oversize_access_list_is_rejected() {
+        use std::fmt::Write as _;
+        let key = b64(&[0x11; 32]);
+        let n = MAX_ACCESS_STANZAS + 1;
+        let mut body = String::from("[daemon]\n[replay]\n\n");
+        for i in 0..n {
+            write!(
+                body,
+                "[[access]]\nname = \"s{i}\"\nsource = [\"any\"]\nopen_ports = [\"tcp/22\"]\nmaster_key_base64 = \"{key}\"\n\n"
+            ).unwrap();
+        }
+        let err = toml::from_str::<DaemonConfig>(&body).unwrap_err();
+        assert!(
+            err.to_string().contains("access list"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// Helper: build a valid `DaemonConfig` programmatically (not through
+    /// TOML) so tests can mutate individual fields after construction.
+    fn valid_config() -> DaemonConfig {
+        toml::from_str(&minimal_config_toml()).unwrap()
+    }
+
+    #[test]
+    fn zero_default_fw_timeout_is_rejected() {
+        let mut cfg = valid_config();
+        cfg.daemon.default_fw_timeout = Duration::from_secs(0);
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("default_fw_timeout"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn zero_max_fw_timeout_is_rejected() {
+        let mut cfg = valid_config();
+        cfg.daemon.max_fw_timeout = Duration::from_secs(0);
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("max_fw_timeout"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn zero_max_spa_packet_age_is_rejected() {
+        let mut cfg = valid_config();
+        cfg.daemon.max_spa_packet_age = Duration::from_secs(0);
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("max_spa_packet_age"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn zero_replay_max_age_is_rejected() {
+        let mut cfg = valid_config();
+        cfg.replay.max_age = Duration::from_secs(0);
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("replay.max_age"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn absurdly_long_timeout_is_rejected() {
+        let mut cfg = valid_config();
+        // > 7 days.
+        cfg.daemon.max_fw_timeout = Duration::from_secs(86_400 * 8);
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("7 days"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn absurdly_long_default_fw_timeout_is_rejected() {
+        let mut cfg = valid_config();
+        cfg.daemon.default_fw_timeout = Duration::from_secs(86_400 * 8);
+        cfg.daemon.max_fw_timeout = Duration::from_secs(86_400 * 8);
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("7 days"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn relative_cache_path_rejected() {
+        let mut cfg = valid_config();
+        cfg.replay.cache_path = PathBuf::from("relative/cache");
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("cache_path") && err.to_string().contains("absolute"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn cache_path_with_parent_dir_rejected() {
+        let mut cfg = valid_config();
+        cfg.replay.cache_path = PathBuf::from("/var/lib/fwknox/../evil/replay.cache");
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("cache_path") && err.to_string().contains(".."),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn absolute_cache_path_without_parent_dir_accepted() {
+        let mut cfg = valid_config();
+        cfg.replay.cache_path = PathBuf::from("/var/lib/fwknox/replay.cache");
+        cfg.validate().unwrap();
     }
 
     #[test]

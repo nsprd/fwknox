@@ -38,7 +38,7 @@ use std::{borrow::Cow, collections::HashSet, sync::Mutex};
 use nftables::{
     batch::Batch,
     expr::{Elem, Expression, Meta, MetaKey, NamedExpression, Payload, PayloadField},
-    helper,
+    helper::{self, NftablesError},
     schema::{
         Chain, Element, NfListObject, Nftables, Rule, Set, SetFlag, SetType, SetTypeValue, Table,
     },
@@ -76,8 +76,44 @@ pub struct SystemApplier;
 
 impl RulesetApplier for SystemApplier {
     fn apply(&self, ruleset: &Nftables<'_>) -> Result<(), FirewallError> {
-        helper::apply_ruleset(ruleset).map_err(|e| FirewallError::Backend(e.to_string()))
+        helper::apply_ruleset(ruleset).map_err(nftables_error_to_firewall)
     }
+}
+
+/// Convert an [`NftablesError`] into a [`FirewallError`]. The `Display`
+/// impl of [`NftablesError::NftFailed`] discards the `stderr` field, but
+/// that field is exactly what [`remove_rule`] needs to see in order to
+/// decide whether the kernel reported an `ENOENT`-equivalent. We fold
+/// the stderr into the returned `Backend` message so callers can inspect
+/// it (see [`stderr_indicates_missing_element`]).
+fn nftables_error_to_firewall(err: NftablesError) -> FirewallError {
+    match err {
+        NftablesError::NftFailed {
+            program,
+            hint,
+            stdout,
+            stderr,
+        } => FirewallError::Backend(format!(
+            "{prog} failed while {hint}: stdout={stdout:?} stderr={stderr:?}",
+            prog = program.display(),
+        )),
+        other => FirewallError::Backend(other.to_string()),
+    }
+}
+
+/// Return `true` if `stderr` emitted by the `nft` binary indicates that
+/// a set element we tried to delete did not exist at the moment the
+/// kernel applied our batch.
+///
+/// The kernel surfaces this as `ENOENT` (`"No such file or directory"`);
+/// `nft` also prints `"Could not process rule"` on the same line. We
+/// match on either phrase so small formatting changes across nft
+/// releases don't silently degrade the classification.
+fn stderr_indicates_missing_element(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("no such file or directory")
+        || lower.contains("could not process rule")
+        || lower.contains("set element does not exist")
 }
 
 /// nftables backend that builds typed `Nftables` rulesets and dispatches
@@ -283,8 +319,22 @@ impl FirewallBackend for NftablesBackend {
             }));
         }
         let ruleset = batch.to_nftables();
-        self.applier.apply(&ruleset)?;
-        Ok(())
+        // `nftables-rs` (0.6.x) does not expose a typed set-membership
+        // query path — the only "read" helper is `get_current_ruleset`,
+        // which shells out to `nft list ruleset` and is both expensive
+        // and racy against concurrent kernel timeouts. We therefore take
+        // the pragmatic path: submit the delete batch and, if the kernel
+        // reports an `ENOENT`-equivalent (the element already expired or
+        // was manually removed), translate the backend error into
+        // [`FirewallError::RuleNotFound`] so the caller can log at INFO
+        // rather than ERROR.
+        match self.applier.apply(&ruleset) {
+            Ok(()) => Ok(()),
+            Err(FirewallError::Backend(msg)) if stderr_indicates_missing_element(&msg) => {
+                Err(FirewallError::RuleNotFound(handle.as_str().into()))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn flush(&mut self) -> Result<(), FirewallError> {
@@ -528,5 +578,55 @@ mod tests {
         *applier.fail_with.lock().unwrap() = Some("permission denied".into());
         let err = b.init().unwrap_err();
         assert!(matches!(err, FirewallError::Backend(_)));
+    }
+
+    #[test]
+    fn remove_rule_translates_enoent_to_rulenotfound() {
+        // Simulate the kernel reporting that the set element we asked
+        // to delete is already gone (e.g. timed out). The `nft` binary
+        // surfaces this as "No such file or directory" on stderr, which
+        // `SystemApplier` folds into the `Backend` variant's message.
+        let (mut b, applier) = make_backend();
+        b.init().unwrap();
+        let handle = b.open_access(&rule()).unwrap();
+        // Start failing only for the next call (the remove).
+        *applier.fail_with.lock().unwrap() = Some(
+            "\"nft\" failed while applying ruleset: stdout=\"\" \
+             stderr=\"Error: Could not process rule: No such file or directory\""
+                .into(),
+        );
+        let err = b.remove_rule(&handle).unwrap_err();
+        assert!(
+            matches!(err, FirewallError::RuleNotFound(_)),
+            "expected RuleNotFound, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn remove_rule_propagates_non_enoent_backend_errors() {
+        let (mut b, applier) = make_backend();
+        b.init().unwrap();
+        let handle = b.open_access(&rule()).unwrap();
+        *applier.fail_with.lock().unwrap() = Some("permission denied".into());
+        let err = b.remove_rule(&handle).unwrap_err();
+        assert!(
+            matches!(err, FirewallError::Backend(_)),
+            "expected Backend, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn stderr_matcher_recognises_nft_enoent_phrasings() {
+        assert!(stderr_indicates_missing_element(
+            "Error: Could not process rule: No such file or directory"
+        ));
+        assert!(stderr_indicates_missing_element(
+            "set element does not exist"
+        ));
+        assert!(stderr_indicates_missing_element(
+            "NO SUCH FILE OR DIRECTORY"
+        ));
+        assert!(!stderr_indicates_missing_element("permission denied"));
+        assert!(!stderr_indicates_missing_element(""));
     }
 }

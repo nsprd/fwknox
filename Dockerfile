@@ -10,10 +10,12 @@
 
 FROM debian:trixie-slim
 
-# nftables = firewall backend. ca-certificates for any future TLS use.
+# nftables = firewall backend. fwknoxd makes no outbound TLS calls today
+# (no reqwest/rustls/native-tls/openssl in the workspace), so we do not
+# ship ca-certificates. Add it back if a future HTTPS config-fetch or
+# notification sink lands.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nftables \
-        ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system fwknox \
     && useradd --system --gid fwknox --home-dir /var/lib/fwknox \

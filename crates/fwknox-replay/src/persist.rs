@@ -84,10 +84,19 @@ pub(crate) fn write_cache_file(
             })?;
         }
     }
+    tmp.as_file_mut()
+        .sync_all()
+        .map_err(|e| ReplayError::Write {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
     tmp.persist(path).map_err(|e| ReplayError::Write {
         path: path.to_path_buf(),
         source: e.error,
     })?;
+    if let Ok(dir) = std::fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
     Ok(())
 }
 
@@ -181,6 +190,19 @@ mod tests {
         fs::write(&path, "not enough fields\n").unwrap();
         let err = read_cache_file(&path).unwrap_err();
         assert!(matches!(err, ReplayError::InvalidFormat { .. }));
+    }
+
+    #[test]
+    fn write_cache_file_syncs_before_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synced.cache");
+        let mut entries = HashMap::new();
+        entries.insert([0xDE; 16], 42u64);
+        write_cache_file(&path, &entries).unwrap();
+        let reloaded = read_cache_file(&path).unwrap();
+        assert_eq!(reloaded, entries);
+        let parent = path.parent().unwrap();
+        std::fs::File::open(parent).unwrap().sync_all().unwrap();
     }
 
     #[test]

@@ -145,6 +145,19 @@ mod tests {
     }
 
     #[test]
+    fn removing_unknown_rule_returns_rulenotfound() {
+        // Audit task 7.1: simulate a stale handle whose underlying
+        // element has already been removed (kernel timeout, admin
+        // flush, etc). The mock should return `RuleNotFound` rather
+        // than silently succeeding.
+        let mut fw = MockBackend::new();
+        fw.init().unwrap();
+        let handle = RuleHandle::new("mock-never-installed");
+        let err = fw.remove_rule(&handle).unwrap_err();
+        assert!(matches!(err, FirewallError::RuleNotFound(_)));
+    }
+
+    #[test]
     fn handles_are_unique() {
         let mut b = MockBackend::new();
         b.init().unwrap();

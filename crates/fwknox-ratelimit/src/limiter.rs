@@ -2,10 +2,29 @@
 
 //! The public `RateLimiter` type and its core `check` algorithm.
 
-use std::{net::IpAddr, num::NonZeroUsize, sync::Mutex, time::Instant};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    num::NonZeroUsize,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use fwknox_config::RateLimitSection;
 use lru::LruCache;
+
+/// TTL after which a partial promotion count is considered stale and
+/// may be reclaimed. A source that went quiet for this long is no
+/// longer "about to promote" and its counter can be discarded to make
+/// room for new candidates.
+///
+/// Unlike the old LRU-based candidate table, the candidate map is
+/// bounded by `tracked_sources_capacity` but REJECTS new entries when
+/// full rather than evicting the oldest. This prevents a flood of
+/// distinct one-off sources from starving an honest frequent source
+/// out of its partial promotion count (H6). Rejected sources still
+/// hit the global bucket, which provides the backpressure.
+const CANDIDATE_TTL: Duration = Duration::from_secs(60);
 
 use crate::{
     bucket::{BucketDecision, TokenBucket},
@@ -44,12 +63,50 @@ pub struct RateLimiter {
 
 struct Inner {
     tracked: LruCache<SourceKey, TokenBucket>,
-    candidates: LruCache<SourceKey, u32>,
+    /// Partial promotion counts for sources that have passed the global
+    /// bucket but not yet reached `promotion_threshold`. Bounded by
+    /// `max_candidates`; entries age out after `CANDIDATE_TTL`. When
+    /// the map is full, new candidates are REJECTED (not evicted) so
+    /// floods cannot starve an in-progress honest candidate of its
+    /// partial count. See the `CANDIDATE_TTL` doc for rationale.
+    candidates: HashMap<SourceKey, (u32, Instant)>,
+    /// Upper bound on `candidates.len()`. Kept in sync with the
+    /// tracked LRU's capacity so a burst of legitimate new sources can
+    /// always make progress at a rate bounded by the same sizing knob.
+    max_candidates: usize,
     global: TokenBucket,
     clock: Box<dyn Clock>,
     /// Last time a global-bucket-drop warning was logged. Throttles
     /// warn-level spam on sustained floods.
     last_global_drop_warn: Option<Instant>,
+}
+
+impl Inner {
+    /// Drops candidate entries whose last-seen timestamp is older than
+    /// `CANDIDATE_TTL`. Called on every candidate insertion, which is
+    /// cheap even for `max_candidates` in the low thousands.
+    fn sweep_expired_candidates(&mut self, now: Instant) {
+        self.candidates
+            .retain(|_, (_, last_seen)| now.duration_since(*last_seen) < CANDIDATE_TTL);
+    }
+
+    /// Resets in-memory state to a safe default, used when recovering
+    /// from a poisoned mutex. Any prior half-updated counter or torn
+    /// bucket state is discarded; the global bucket is re-primed from
+    /// the caller-supplied config as of `now` so subsequent packets
+    /// see a consistent starting point rather than possibly-negative
+    /// or mid-refill internals.
+    ///
+    /// Configuration-derived invariants (capacity, rate, burst) are
+    /// preserved — only the live runtime state is cleared.
+    fn reset(&mut self, config: &RateLimitSection, now: Instant) {
+        self.tracked.clear();
+        self.candidates.clear();
+        // Re-initialize the global bucket so its internal accounting
+        // (`tokens`, `last_refill`) is known-good.
+        self.global = TokenBucket::new(config.global_rate_per_sec, config.global_burst, now);
+        self.last_global_drop_warn = None;
+    }
 }
 
 /// Checks whether a warn-level log should be emitted for a drop,
@@ -97,7 +154,8 @@ impl RateLimiter {
             .expect("tracked_sources_capacity >= 1 (enforced by config validation)");
         let inner = Inner {
             tracked: LruCache::new(capacity),
-            candidates: LruCache::new(capacity),
+            candidates: HashMap::with_capacity(config.tracked_sources_capacity),
+            max_candidates: config.tracked_sources_capacity,
             global: TokenBucket::new(config.global_rate_per_sec, config.global_burst, now),
             clock,
             last_global_drop_warn: None,
@@ -109,11 +167,44 @@ impl RateLimiter {
         }
     }
 
+    /// Locks `self.inner`, recovering from a poisoned mutex by logging
+    /// at ERROR and wiping the in-memory state back to a safe default.
+    ///
+    /// Poisoning means a previous lock-holder panicked mid-update, so
+    /// the counters we'd observe may be torn (e.g. a candidate's count
+    /// was incremented but `last_seen` was not, or a bucket's
+    /// `last_refill` was updated but `tokens` was not). Blindly
+    /// resuming with `into_inner` would surface those inconsistencies
+    /// to later packets. Instead we discard live state and rebuild the
+    /// global bucket from config; configuration-derived invariants are
+    /// preserved.
+    ///
+    /// Caller must hold an enabled limiter (`self.inner.is_some()`).
+    fn lock_recovering<'a>(&'a self, mutex: &'a Mutex<Inner>) -> std::sync::MutexGuard<'a, Inner> {
+        match mutex.lock() {
+            Ok(g) => g,
+            Err(poisoned) => {
+                tracing::error!("ratelimit mutex poisoned; resetting in-memory state");
+                let mut g = poisoned.into_inner();
+                let now = g.clock.now();
+                g.reset(&self.config, now);
+                // Clear the poison flag so a later direct lock (or a
+                // subsequent `lock_recovering` call) sees a healthy
+                // mutex rather than re-entering the recovery path and
+                // wiping state that was validly built after the panic.
+                mutex.clear_poison();
+                g
+            }
+        }
+    }
+
     /// Checks whether a packet from `src_ip` may proceed.
     ///
     /// This method cannot fail — all operations are in-memory. A
-    /// poisoned mutex is recovered via `into_inner` so the final
-    /// packets before process death still receive a decision.
+    /// poisoned mutex is recovered by logging and resetting in-memory
+    /// state (see [`Self::lock_recovering`]) so the final packets
+    /// before process death still receive a decision, but with
+    /// consistent internal accounting rather than torn counters.
     pub fn check(&self, src_ip: IpAddr) -> Decision {
         let Some(ref mutex) = self.inner else {
             self.stats.incr_allowed();
@@ -121,9 +212,7 @@ impl RateLimiter {
         };
 
         let key = SourceKey::from_ip(src_ip, self.config.ipv6_prefix_len);
-        let mut inner = mutex
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut inner = self.lock_recovering(mutex);
         let now = inner.clock.now();
 
         // Tier 1: exact-tracked hot source.
@@ -176,14 +265,33 @@ impl RateLimiter {
 
         // Packet passed the global bucket. Bump the candidates counter and
         // promote if the threshold is reached.
-        let new_count = if let Some(count) = inner.candidates.get_mut(&key) {
-            *count += 1;
+        //
+        // Semantics (H6 fix): the candidate map is bounded and ages by
+        // TTL. If the source already has an entry we bump it. If it
+        // doesn't and the map is full, we sweep expired entries first;
+        // if still full, we REJECT the new candidate (the source still
+        // passed the global bucket — it just won't accumulate toward
+        // promotion this round). Rejecting instead of evicting means a
+        // flood of one-off sources cannot starve an in-progress honest
+        // source of its partial count.
+        let new_count = if let Some((count, last_seen)) = inner.candidates.get_mut(&key) {
+            *count = count.saturating_add(1);
+            *last_seen = now;
             *count
         } else {
-            // `push` on an LruCache returns Some((k, v)) if a value was
-            // evicted due to capacity. We don't care — the evicted
-            // candidate just loses its partial progress, which is fine.
-            inner.candidates.push(key, 1);
+            if inner.candidates.len() >= inner.max_candidates {
+                inner.sweep_expired_candidates(now);
+            }
+            if inner.candidates.len() >= inner.max_candidates {
+                // Map still full of live candidates — reject this new one.
+                // The source was already admitted by the global bucket so
+                // the packet still passes; it just does not count toward
+                // promotion. Subsequent packets from this source will
+                // retry (they hit this same branch again).
+                self.stats.incr_allowed();
+                return Decision::Pass;
+            }
+            inner.candidates.insert(key, (1, now));
             1
         };
 
@@ -193,7 +301,7 @@ impl RateLimiter {
                 self.config.per_source_burst,
                 now,
             );
-            inner.candidates.pop(&key);
+            inner.candidates.remove(&key);
             // `push` on the tracked LRU tells us whether we evicted. The
             // distinguishing check: if `push` returns Some((k, _)) and the
             // returned key *differs* from the one we just pushed, it's a
@@ -648,13 +756,95 @@ mod tests {
         let _ = handle.join();
 
         // At this point the mutex is poisoned. `check` must still return
-        // a Decision via the unwrap_or_else(into_inner) recovery.
+        // a Decision via the lock_recovering() path.
         let result = catch_unwind(AssertUnwindSafe(|| {
             limiter.check("10.0.0.1".parse().unwrap())
         }));
         assert!(result.is_ok(), "check must not panic on a poisoned mutex");
         // Further checks should also work.
         let _ = limiter.check("10.0.0.2".parse().unwrap());
+    }
+
+    #[test]
+    fn poisoned_mutex_recovery_resets_in_memory_state() {
+        // Task 5.2 (M8): on a poisoned mutex, the limiter must not
+        // silently resume with possibly-torn counters. It must wipe
+        // live state (tracked LRU, candidates map, global-drop warn
+        // timestamp) so subsequent packets see a known-good baseline.
+        use std::{
+            panic::{catch_unwind, AssertUnwindSafe},
+            sync::Arc,
+        };
+
+        let clock = Arc::new(MockClock::new());
+        let limiter = Arc::new(RateLimiter::with_clock(
+            &default_config(),
+            Box::new(CloneableMockClock(clock.clone())),
+        ));
+
+        // Prime state: promote one source into tracked, and leave a
+        // partial candidate entry for a second source.
+        let promoted: IpAddr = "10.0.0.1".parse().unwrap();
+        let threshold = default_config().promotion_threshold;
+        for _ in 0..threshold {
+            assert_eq!(limiter.check(promoted), Decision::Pass);
+        }
+        let partial: IpAddr = "10.0.0.2".parse().unwrap();
+        assert_eq!(limiter.check(partial), Decision::Pass);
+
+        // Sanity: inner state is non-empty.
+        {
+            let inner = limiter.inner.as_ref().unwrap().lock().unwrap();
+            assert!(!inner.tracked.is_empty(), "expected tracked to be primed");
+            assert!(
+                !inner.candidates.is_empty(),
+                "expected candidates to be primed",
+            );
+        }
+
+        // Force-poison on a child thread so our test runner isn't
+        // terminated by the deliberate panic.
+        let poisoner = limiter.clone();
+        let _ = std::thread::spawn(move || {
+            let Some(ref mutex) = poisoner.inner else {
+                return;
+            };
+            let _g = mutex.lock().unwrap();
+            panic!("force poison");
+        })
+        .join();
+
+        // Next check recovers (must not panic) and returns a Decision.
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            limiter.check("10.0.0.3".parse().unwrap())
+        }));
+        assert!(result.is_ok(), "check must not panic on a poisoned mutex");
+
+        // State must have been reset. The tracked LRU is empty (the
+        // previously-promoted source is gone) and the candidates map
+        // holds at most the single fresh source that triggered the
+        // recovery — never the pre-poison partials.
+        {
+            let inner = limiter.inner.as_ref().unwrap().lock().unwrap();
+            assert!(
+                inner.tracked.is_empty(),
+                "tracked LRU must be cleared on poison recovery",
+            );
+            assert!(
+                !inner.candidates.contains_key(&SourceKey::from_ip(
+                    partial,
+                    default_config().ipv6_prefix_len,
+                )),
+                "pre-poison candidate entry must be cleared on recovery",
+            );
+            assert!(
+                inner.last_global_drop_warn.is_none(),
+                "warn-throttle timestamp must be cleared on recovery",
+            );
+        }
+
+        // Further calls must keep working without panicking.
+        let _ = limiter.check("10.0.0.4".parse().unwrap());
     }
 
     #[test]
@@ -739,6 +929,59 @@ mod tests {
         assert!(
             third_ts > second_ts,
             "after 1s the next drop must re-fire the warn log"
+        );
+    }
+
+    #[test]
+    fn honest_source_reaches_promotion_despite_eviction_pressure() {
+        // H6 regression: a flood of distinct one-off sources must not be
+        // able to starve an honest frequent source out of its partial
+        // promotion count.
+        //
+        // Layout: tracked/candidate capacity 4, promotion_threshold 3.
+        // Hit the honest source once first so it has count=1, then hit
+        // 100 distinct one-off sources (which, under LRU semantics,
+        // evict the honest source's counter), then hit the honest
+        // source twice more. Under an LRU-eviction candidates map the
+        // honest source's count is reset to 1 on the second hit and
+        // only reaches 2 on the third hit — never promoting. Under a
+        // TTL-based map with reject-on-full the honest source's
+        // counter survives the flood and promotes on the third hit.
+        let mut cfg = default_config();
+        cfg.tracked_sources_capacity = 4;
+        cfg.promotion_threshold = 3;
+        // Make sure the global bucket never blocks us from reaching
+        // the candidate path.
+        cfg.global_burst = 10_000;
+        cfg.global_rate_per_sec = 10_000;
+
+        let clock = std::sync::Arc::new(MockClock::new());
+        let limiter = RateLimiter::with_clock(&cfg, Box::new(CloneableMockClock(clock.clone())));
+
+        let honest: IpAddr = "10.9.9.9".parse().unwrap();
+
+        // Hit 1: honest gets candidate count = 1.
+        assert_eq!(limiter.check(honest), Decision::Pass);
+
+        // Pressure: 100 distinct flooders, each one packet. Under a
+        // capacity-4 LRU, this evicts the honest source's candidate.
+        for i in 0..100u32 {
+            let octet2 = u8::try_from(i / 256).unwrap();
+            let octet3 = u8::try_from(i % 256).unwrap();
+            let flooder: IpAddr = format!("10.8.{octet2}.{octet3}").parse().unwrap();
+            assert_eq!(limiter.check(flooder), Decision::Pass);
+        }
+
+        // Honest hits 2 and 3. On hit 3, total count should reach 3
+        // and the source should promote.
+        assert_eq!(limiter.check(honest), Decision::Pass);
+        assert_eq!(limiter.check(honest), Decision::Pass);
+
+        let snap = limiter.stats();
+        assert!(
+            snap.promotions >= 1,
+            "honest source must promote within 3 successful hits despite candidate-table pressure (got promotions={})",
+            snap.promotions,
         );
     }
 

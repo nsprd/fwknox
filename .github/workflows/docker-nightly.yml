@@ -36,7 +36,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.arch }}

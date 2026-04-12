@@ -10,11 +10,55 @@
 use std::path::Path;
 
 use landlock::{
-    Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
+    Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+    ABI,
 };
 use tracing::{debug, info, warn};
 
 use crate::error::SandboxError;
+
+/// Outcome of interpreting a Landlock `RulesetStatus` in the context of
+/// the policy that was installed. This lets callers (daemon vs. worker)
+/// treat `PartiallyEnforced` differently depending on whether any
+/// explicit allow rules were present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RulesetOutcome {
+    /// The ruleset provides the protection the caller expected.
+    Enforced,
+    /// The kernel did not provide sufficient enforcement for the caller's
+    /// threat model; the caller MUST fail closed.
+    Insufficient,
+}
+
+/// Classify a `RulesetStatus` against whether the installed policy was
+/// empty (i.e. zero allow rules — total filesystem denial was the
+/// intent, as in the worker sandbox).
+///
+/// - `FullyEnforced` is always sufficient.
+/// - `NotEnforced` is always insufficient (kernel < 5.13 or disabled).
+/// - `PartiallyEnforced` with an empty policy is insufficient: the
+///   worker sandbox relies on the full ruleset being active to deny all
+///   filesystem access. If the kernel only partially applied it, the
+///   worker may still reach the filesystem, which violates the sandbox
+///   contract. Fail closed.
+/// - `PartiallyEnforced` with a non-empty policy is acceptable: the
+///   daemon installs explicit allow rules over an otherwise denied set,
+///   so partial enforcement still narrows access relative to no
+///   sandbox at all. Log and continue.
+pub(crate) fn classify_status(status: &RulesetStatus, policy_is_empty: bool) -> RulesetOutcome {
+    // The four arms are kept enumerated (rather than merged) so the
+    // audit-visible mapping from (status, policy-shape) -> outcome stays
+    // 1:1 with the doc comment above. Merging via `|` would obscure the
+    // asymmetry between the two `PartiallyEnforced` cases, which is the
+    // whole point of this helper.
+    #[allow(clippy::match_same_arms)]
+    match (status, policy_is_empty) {
+        (RulesetStatus::FullyEnforced, _) => RulesetOutcome::Enforced,
+        (RulesetStatus::PartiallyEnforced, true) => RulesetOutcome::Insufficient,
+        (RulesetStatus::PartiallyEnforced, false) => RulesetOutcome::Enforced,
+        (RulesetStatus::NotEnforced, _) => RulesetOutcome::Insufficient,
+    }
+}
 
 /// Landlock ABI version fwknox targets.
 ///
@@ -40,6 +84,7 @@ pub struct FilesystemPolicy<'a> {
 /// This is IRREVOCABLE once it succeeds. Calling code should make sure
 /// every path is final before calling.
 pub fn apply(policy: &FilesystemPolicy<'_>) -> Result<(), SandboxError> {
+    let policy_is_empty = policy.read_only.is_empty() && policy.read_write.is_empty();
     let read_only_access = AccessFs::from_read(TARGET_ABI);
     let read_write_access = AccessFs::from_all(TARGET_ABI);
 
@@ -71,18 +116,41 @@ pub fn apply(policy: &FilesystemPolicy<'_>) -> Result<(), SandboxError> {
         .map_err(|e| SandboxError::Landlock(format!("restrict_self failed: {e}")))?;
 
     // `restrict_self` succeeds on unsupported kernels but returns a
-    // status indicating the ruleset wasn't actually enforced. Check.
-    match status.ruleset {
-        landlock::RulesetStatus::FullyEnforced => {
-            info!("landlock: ruleset fully enforced");
-        }
-        landlock::RulesetStatus::PartiallyEnforced => {
-            warn!("landlock: ruleset only partially enforced (older kernel features unavailable)");
-        }
-        landlock::RulesetStatus::NotEnforced => {
-            return Err(SandboxError::Landlock(
-                "kernel does not support Landlock (needs Linux 5.13+)".into(),
-            ));
+    // status indicating the ruleset wasn't actually enforced. Check,
+    // and treat `PartiallyEnforced` as fail-closed when the policy is
+    // empty (the worker sandbox case — see `classify_status` docs).
+    match classify_status(&status.ruleset, policy_is_empty) {
+        RulesetOutcome::Enforced => match status.ruleset {
+            RulesetStatus::FullyEnforced => {
+                info!("landlock: ruleset fully enforced");
+            }
+            RulesetStatus::PartiallyEnforced => {
+                warn!(
+                    "landlock: ruleset only partially enforced \
+                     (older kernel features unavailable); \
+                     explicit allow rules still narrow access"
+                );
+            }
+            RulesetStatus::NotEnforced => {
+                unreachable!("classify_status never returns Enforced for NotEnforced")
+            }
+        },
+        RulesetOutcome::Insufficient => {
+            return Err(SandboxError::Landlock(match status.ruleset {
+                RulesetStatus::NotEnforced => {
+                    "kernel does not support Landlock (needs Linux 5.13+)".into()
+                }
+                RulesetStatus::PartiallyEnforced => {
+                    // Empty policy + PartiallyEnforced: the worker
+                    // sandbox's total-deny intent cannot be guaranteed.
+                    "landlock: kernel only partially enforced an empty policy; \
+                     refusing to run worker without full filesystem denial"
+                        .into()
+                }
+                RulesetStatus::FullyEnforced => {
+                    unreachable!("classify_status never returns Insufficient for FullyEnforced")
+                }
+            }));
         }
     }
     Ok(())
@@ -93,6 +161,56 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    #[test]
+    fn classify_fully_enforced_is_always_enforced() {
+        // FullyEnforced means the kernel installed every rule we asked
+        // for. Policy shape (empty or not) is irrelevant.
+        assert_eq!(
+            classify_status(&RulesetStatus::FullyEnforced, true),
+            RulesetOutcome::Enforced
+        );
+        assert_eq!(
+            classify_status(&RulesetStatus::FullyEnforced, false),
+            RulesetOutcome::Enforced
+        );
+    }
+
+    #[test]
+    fn classify_partially_enforced_empty_policy_is_insufficient() {
+        // Worker sandbox case: empty policy = "deny everything". If the
+        // kernel only partially enforced it, we have no guarantee the
+        // worker is actually blocked from the filesystem.
+        assert_eq!(
+            classify_status(&RulesetStatus::PartiallyEnforced, true),
+            RulesetOutcome::Insufficient
+        );
+    }
+
+    #[test]
+    fn classify_partially_enforced_non_empty_policy_is_enforced() {
+        // Daemon sandbox case: explicit allow rules. Partial
+        // enforcement still narrows the process relative to no
+        // sandbox, so we accept it with a warning.
+        assert_eq!(
+            classify_status(&RulesetStatus::PartiallyEnforced, false),
+            RulesetOutcome::Enforced
+        );
+    }
+
+    #[test]
+    fn classify_not_enforced_is_always_insufficient() {
+        // NotEnforced means Landlock isn't active at all (old kernel or
+        // disabled). Never acceptable, regardless of policy shape.
+        assert_eq!(
+            classify_status(&RulesetStatus::NotEnforced, true),
+            RulesetOutcome::Insufficient
+        );
+        assert_eq!(
+            classify_status(&RulesetStatus::NotEnforced, false),
+            RulesetOutcome::Insufficient
+        );
+    }
 
     #[test]
     fn filesystem_policy_construction() {

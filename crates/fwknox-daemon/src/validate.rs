@@ -14,7 +14,10 @@ use fwknox_config::DaemonConfig;
 use fwknox_privsep::{CaptureMsg, CryptoMsg};
 use fwknox_proto::{validate_against_clock, SpaMessage, DEFAULT_MAX_SKEW_SECS};
 
-use crate::matcher::{match_packet, MatchResult};
+use crate::{
+    matcher::{match_packet, MatchResult},
+    pipeline::find_stanza,
+};
 
 #[allow(clippy::cast_possible_wrap)]
 fn now_unix() -> i64 {
@@ -51,11 +54,19 @@ pub fn validate_capture_msg(msg: CaptureMsg, config: &DaemonConfig) -> CryptoMsg
         }
     };
 
-    let stanza = config
-        .access
-        .iter()
-        .find(|s| s.name == stanza_name)
-        .expect("stanza name from matcher must exist in config");
+    let stanza = match find_stanza(config, &stanza_name) {
+        Ok(s) => s,
+        Err(e) => {
+            // Should-never-happen: the matcher returned a stanza name
+            // that is not in `config.access`. We prefer to log and
+            // reject the packet rather than panic the crypto worker.
+            tracing::error!(error = %e, stanza = %stanza_name, "stanza lookup invariant violated");
+            return CryptoMsg::Rejected {
+                source_ip,
+                reason: e.to_string(),
+            };
+        }
+    };
 
     // Timestamp.
     let max_age = i64::try_from(config.daemon.max_spa_packet_age.as_secs()).unwrap_or(i64::MAX);
@@ -189,6 +200,23 @@ require_source_match = true
         };
         let reply = validate_capture_msg(msg, &cfg);
         assert!(matches!(reply, CryptoMsg::NoMatch { .. }));
+    }
+
+    #[test]
+    fn missing_stanza_lookup_yields_invariant_error() {
+        // Exercises the lookup helper used by `validate_capture_msg`.
+        // If the matcher ever returned a name not in `config.access`
+        // (e.g. after a config reload race), the helper surfaces the
+        // violation as an error instead of panicking the crypto
+        // worker.
+        let key = [0x42u8; 32];
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = load_daemon_config(write_config(dir.path(), &key)).unwrap();
+        let err = find_stanza(&cfg, "does-not-exist").unwrap_err();
+        assert!(
+            matches!(err, crate::error::DaemonError::InvariantViolation(_)),
+            "got: {err:?}"
+        );
     }
 
     #[test]

@@ -17,8 +17,9 @@ mod shared;
 
 pub use client::{ClientConfig, ClientTransport, DefaultsSection, ServerEntry};
 pub use daemon::{
-    AccessStanza, DaemonConfig, DaemonSection, FirewallBackend, RateLimitSection, ReplaySection,
+    AccessStanza, BoundedAccess, BoundedSources, DaemonConfig, DaemonSection, FirewallBackend,
+    RateLimitSection, ReplaySection, MAX_ACCESS_STANZAS, MAX_SOURCES_PER_STANZA,
 };
 pub use error::ConfigError;
 pub use load::{load_client_config, load_daemon_config};
-pub use shared::{parse_port_proto, Base64Key, PortProtoList, SourceSpec};
+pub use shared::{parse_port_proto, Base64Key, PortProtoList, SourceSpec, MAX_PORTS_PER_STANZA};

@@ -71,6 +71,20 @@ pub fn drop_all() -> Result<(), SandboxError> {
 /// Permitted (e.g. because the parent didn't actually hold it), this
 /// returns a `SandboxError::Capability`.
 pub fn raise_effective(keep: &[Capability]) -> Result<(), SandboxError> {
+    // Precondition: every cap we want to raise into Effective must
+    // already be present in Permitted. If not, the `caps::raise` call
+    // below would fail with an opaque EPERM from capset(2); checking
+    // up front lets us surface a clear configuration error and fail
+    // fast rather than late.
+    let permitted = caps::read(None, CapSet::Permitted)
+        .map_err(|e| SandboxError::Configuration(format!("read Permitted: {e}")))?;
+    for cap in keep {
+        if !permitted.contains(cap) {
+            return Err(SandboxError::Configuration(format!(
+                "cannot raise {cap:?}: not in Permitted set"
+            )));
+        }
+    }
     for cap in keep {
         caps::raise(None, CapSet::Effective, *cap).map_err(|e| {
             SandboxError::Capability(format!("could not raise {cap:?} into effective set: {e}"))
@@ -95,5 +109,22 @@ mod tests {
     #[test]
     fn keep_list_with_net_admin_does_not_error() {
         let _ = drop_all_except(&[Capability::CAP_NET_ADMIN]);
+    }
+
+    #[test]
+    fn raise_effective_rejects_cap_not_in_permitted() {
+        // CAP_MAC_ADMIN is essentially never held by an unprivileged
+        // test runner, and even a root-running CI is vanishingly
+        // unlikely to hold it unless LSMs (SELinux/Smack) are
+        // explicitly loaded and configured. If this assertion ever
+        // flakes on an unusual test host, swap for another cap that
+        // the host definitely lacks.
+        let err = raise_effective(&[Capability::CAP_MAC_ADMIN])
+            .expect_err("expected raise_effective to fail when cap is not in Permitted");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("not in Permitted"),
+            "error message should mention 'not in Permitted', got: {msg}"
+        );
     }
 }

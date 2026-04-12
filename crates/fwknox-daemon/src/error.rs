@@ -39,4 +39,12 @@ pub enum DaemonError {
     /// An I/O failure during signal-handler setup or other host work.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// An internal invariant was violated (e.g. a stanza name produced
+    /// by the matcher was not found in the config). These are
+    /// "should-never-happen" conditions that we prefer to surface as
+    /// errors rather than panics so the daemon can log and drop the
+    /// offending packet instead of crashing the whole process.
+    #[error("internal invariant violated: {0}")]
+    InvariantViolation(String),
 }

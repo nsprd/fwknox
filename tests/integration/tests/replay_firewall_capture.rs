@@ -97,7 +97,7 @@ fn end_to_end_capture_validate_replay_install() {
 
     let replay = ReplayCache::new();
     assert!(
-        replay.check_and_insert(parsed.nonce),
+        replay.check_and_insert(parsed.nonce).unwrap(),
         "fresh nonce should be accepted"
     );
 
@@ -135,7 +135,7 @@ fn end_to_end_capture_validate_replay_install() {
 
     // A second send of the same nonce should be detected as a replay.
     assert!(
-        !replay.check_and_insert(parsed.nonce),
+        !replay.check_and_insert(parsed.nonce).unwrap(),
         "second insertion should fail"
     );
 
@@ -150,12 +150,12 @@ fn replay_cache_persists_across_save_and_load() {
     let path = dir.path().join("c.cache");
     {
         let cache = ReplayCache::new();
-        cache.check_and_insert([0x77; 16]);
+        cache.check_and_insert([0x77; 16]).unwrap();
         cache.save_to_file(&path).unwrap();
     }
     let loaded = ReplayCache::load_from_file(&path).unwrap();
     assert!(
-        !loaded.check_and_insert([0x77; 16]),
+        !loaded.check_and_insert([0x77; 16]).unwrap(),
         "should detect prior replay"
     );
 }

@@ -100,6 +100,18 @@ impl ClientConfig {
                     s.name
                 )));
             }
+            if s.destination.trim().is_empty() {
+                return Err(ConfigError::invalid(format!(
+                    "server {}: destination is empty",
+                    s.name
+                )));
+            }
+            if s.port == 0 {
+                return Err(ConfigError::invalid(format!(
+                    "server {}: port is 0",
+                    s.name
+                )));
+            }
         }
         Ok(())
     }
@@ -214,6 +226,64 @@ master_key_base64 = "{k}"
             err.to_string().contains("bogus_flag") || err.to_string().contains("unknown field"),
             "expected unknown-field error, got: {err}"
         );
+    }
+
+    #[test]
+    fn empty_destination_rejected() {
+        let body = format!(
+            r#"
+[[server]]
+name = "x"
+destination = ""
+access = ["tcp/22"]
+master_key_base64 = "{k}"
+"#,
+            k = b64(&[0x11; 32]),
+        );
+        let cfg: ClientConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("destination"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn whitespace_destination_rejected() {
+        let body = format!(
+            r#"
+[[server]]
+name = "x"
+destination = "   "
+access = ["tcp/22"]
+master_key_base64 = "{k}"
+"#,
+            k = b64(&[0x11; 32]),
+        );
+        let cfg: ClientConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("destination"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn zero_port_rejected() {
+        let body = format!(
+            r#"
+[[server]]
+name = "x"
+destination = "my.server.com"
+port = 0
+access = ["tcp/22"]
+master_key_base64 = "{k}"
+"#,
+            k = b64(&[0x11; 32]),
+        );
+        let cfg: ClientConfig = toml::from_str(&body).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("port"), "unexpected error: {err}");
     }
 
     #[test]

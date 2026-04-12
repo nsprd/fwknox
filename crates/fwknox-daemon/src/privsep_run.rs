@@ -37,7 +37,7 @@ use tracing::{debug, error, info, warn};
 use crate::{error::DaemonError, shutdown::ShutdownSignal, validate::validate_capture_msg};
 
 /// How often the parent's main loop wakes up to check its shutdown flag.
-const PARENT_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const PARENT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Run the three-process privsep daemon.
 ///
@@ -293,9 +293,12 @@ fn run_parent_loop(
             }
         }
         if tick.is_multiple_of(crate::run::PRUNE_EVERY_TICKS) {
-            let pruned = replay.prune_older_than(config.replay.max_age);
-            if pruned > 0 {
-                debug!(pruned, "pruned expired replay cache entries");
+            match replay.prune_older_than(config.replay.max_age) {
+                Ok(pruned) if pruned > 0 => {
+                    debug!(pruned, "pruned expired replay cache entries");
+                }
+                Ok(_) => {}
+                Err(e) => warn!(error = %e, "replay cache prune persist failed"),
             }
         }
     }
@@ -345,13 +348,25 @@ fn handle_crypto_msg(
             payload,
         } => {
             // Replay check happens in the parent.
-            if !replay.check_and_insert(payload.nonce) {
-                warn!(
-                    stanza = %stanza_name,
-                    source = %source_ip,
-                    "parent: replay detected"
-                );
-                return;
+            match replay.check_and_insert(payload.nonce) {
+                Ok(true) => {}
+                Ok(false) => {
+                    warn!(
+                        stanza = %stanza_name,
+                        source = %source_ip,
+                        "parent: replay detected"
+                    );
+                    return;
+                }
+                Err(e) => {
+                    error!(
+                        stanza = %stanza_name,
+                        source = %source_ip,
+                        error = %e,
+                        "parent: replay cache persist failed; failing closed (no firewall rule)"
+                    );
+                    return;
+                }
             }
 
             let SpaMessage::Access {
@@ -397,5 +412,16 @@ fn handle_crypto_msg(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parent_poll_interval_is_responsive() {
+        assert!(
+            super::PARENT_POLL_INTERVAL <= std::time::Duration::from_millis(150),
+            "PARENT_POLL_INTERVAL bounds shutdown detection latency"
+        );
     }
 }

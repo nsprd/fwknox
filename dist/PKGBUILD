@@ -21,6 +21,9 @@ makedepends=(
 backup=('etc/fwknox/fwknoxd.toml')
 options=('!lto')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/nsprd/fwknox/archive/v$pkgver.tar.gz")
+# NOTE: sha256sums is "SKIP" in-tree; release CI replaces this line
+# with the computed tarball digest before uploading PKGBUILD as a
+# release asset. Do not ship this file to AUR without running release CI.
 sha256sums=('SKIP')
 
 prepare() {

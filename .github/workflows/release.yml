@@ -42,7 +42,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.arch }}
@@ -187,6 +197,22 @@ jobs:
           pattern: tarball-*
           merge-multiple: true
 
+      # Fetch the GitHub-generated source tarball for this tag, compute
+      # its sha256, and patch dist/PKGBUILD in-place so the AUR-facing
+      # release asset carries a real digest instead of "SKIP". The
+      # in-tree PKGBUILD is left unchanged on purpose — only the release
+      # artifact is pinned.
+      - name: Patch PKGBUILD with source tarball sha256
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          url="https://github.com/${{ github.repository }}/archive/refs/tags/${tag}.tar.gz"
+          curl -sSL "$url" -o release.tar.gz
+          sha=$(sha256sum release.tar.gz | awk '{print $1}')
+          sed -i "s/^sha256sums=.*/sha256sums=('${sha}')/" dist/PKGBUILD
+          grep ^sha256sums dist/PKGBUILD
+          rm release.tar.gz
+
       # Notes auto-generated from .github/release.yml categories applied
       # to PR titles merged since the previous tag. Prerelease flag is
       # set when the tag contains a hyphen (e.g. v0.1.0-rc1).
@@ -196,4 +222,6 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
-          files: release-assets/fwknox-*.tar.gz
+          files: |
+            release-assets/fwknox-*.tar.gz
+            dist/PKGBUILD

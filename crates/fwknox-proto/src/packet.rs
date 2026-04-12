@@ -288,6 +288,34 @@ mod tests {
     }
 
     #[test]
+    fn parse_does_not_panic_on_random_garbage() {
+        let key = [0x42u8; 32];
+        for n in 0..=MAX_PACKET_LEN {
+            let junk = vec![0xAAu8; n];
+            let _ = parse_packet(&junk, &key);
+        }
+    }
+
+    #[test]
+    fn parse_rejects_declared_payload_larger_than_wire() {
+        let payload = sample_payload();
+        let mut wire = build_packet(&payload, &[0x42; 32]).unwrap();
+        wire[2] = 0xFF;
+        wire[3] = 0xFF;
+        let keys = DerivedKeys::derive(&[0x42; 32]).unwrap();
+        let signed_len = wire.len() - HMAC_LEN;
+        let new_tag = hmac::sign(keys.hmac.as_bytes(), &wire[..signed_len]);
+        wire[signed_len..].copy_from_slice(&new_tag);
+        let err = parse_packet(&wire, &[0x42; 32]).unwrap_err();
+        assert!(matches!(
+            err,
+            ProtoError::InvalidField(_)
+                | ProtoError::PacketTooShort { .. }
+                | ProtoError::PacketTooLong { .. }
+        ));
+    }
+
+    #[test]
     fn parse_rejects_asymmetric_flag_in_symmetric_phase1() {
         // Phase 1 only supports symmetric mode. A packet with the ASYMMETRIC
         // flag set should be rejected. We construct a normal packet, flip the

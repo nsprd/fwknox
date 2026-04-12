@@ -57,7 +57,12 @@ const TARGET_ARCH: TargetArch = TargetArch::aarch64;
 ///   reads
 ///
 /// Everything else triggers `SeccompAction::KillProcess`.
-pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
+///
+/// Returns the canonical worker syscall allow-list as a `Vec<i64>`. Kept
+/// as a separate helper so unit tests can assert the list's contents
+/// without having to compile or install a BPF program.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub(crate) fn worker_syscall_list() -> Vec<i64> {
     // Syscalls that exist on both x86_64 and aarch64 Linux ABIs.
     #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
     let mut syscalls: Vec<i64> = vec![
@@ -98,9 +103,12 @@ pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
         libc::SYS_getpid,
         libc::SYS_gettid,
         libc::SYS_tgkill,
-        // Stdlib + signal-hook startup needs
+        // Stdlib + signal-hook startup needs. `prlimit64` is deliberately
+        // NOT on this list — it is a resource-limit manipulation primitive
+        // and stdlib does not need it post-startup once the worker's main
+        // loop is running. If a future stdlib/signal-hook upgrade reintroduces
+        // the need, expect a SIGSYS in `privsep_subprocess` to flag it.
         libc::SYS_getrandom,
-        libc::SYS_prlimit64,
         libc::SYS_rseq,
         libc::SYS_set_robust_list,
         libc::SYS_set_tid_address,
@@ -124,6 +132,15 @@ pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
         syscalls.push(libc::SYS_epoll_wait);
         syscalls.push(libc::SYS_gettimeofday);
     }
+
+    syscalls
+}
+
+/// Build the compiled BPF program for the worker seccomp filter. Uses
+/// [`worker_syscall_list`] as its source of truth for the allow-list so
+/// tests can introspect the list without compiling/applying BPF.
+pub fn worker_filter() -> Result<BpfProgram, SandboxError> {
+    let syscalls = worker_syscall_list();
 
     let rules: BTreeMap<i64, Vec<SeccompRule>> = syscalls
         .into_iter()
@@ -171,4 +188,28 @@ mod tests {
     // a test because it's irrevocable and would break the rest of the
     // test runner. Integration tests in tests/integration can exercise
     // the filter in a subprocess (Phase 6 or later).
+
+    #[test]
+    fn worker_allowlist_excludes_prlimit64() {
+        assert!(
+            !worker_syscall_list().contains(&libc::SYS_prlimit64),
+            "prlimit64 is a resource-limit manipulation primitive; keep out of worker allow-list"
+        );
+    }
+
+    #[test]
+    fn worker_allowlist_still_contains_essential_syscalls() {
+        let list = worker_syscall_list();
+        for s in [
+            libc::SYS_read,
+            libc::SYS_write,
+            libc::SYS_recvfrom,
+            libc::SYS_sendto,
+            libc::SYS_close,
+            libc::SYS_futex,
+            libc::SYS_exit_group,
+        ] {
+            assert!(list.contains(&s), "essential syscall missing: {s}");
+        }
+    }
 }

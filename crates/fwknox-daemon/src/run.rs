@@ -93,9 +93,12 @@ pub fn run(
         }
         tick = tick.wrapping_add(1);
         if tick.is_multiple_of(PRUNE_EVERY_TICKS) {
-            let pruned = replay.prune_older_than(config.replay.max_age);
-            if pruned > 0 {
-                debug!(pruned, "pruned expired replay cache entries");
+            match replay.prune_older_than(config.replay.max_age) {
+                Ok(pruned) if pruned > 0 => {
+                    debug!(pruned, "pruned expired replay cache entries");
+                }
+                Ok(_) => {}
+                Err(e) => warn!(error = %e, "replay cache prune persist failed"),
             }
         }
     };

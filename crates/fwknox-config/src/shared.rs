@@ -8,6 +8,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use fwknox_proto::{PortProto, Protocol};
 use ipnet::IpNet;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::ConfigError;
 
@@ -92,6 +93,13 @@ pub fn parse_port_proto(s: &str) -> Result<PortProto, ConfigError> {
     Ok(PortProto::new(proto, port))
 }
 
+/// Maximum number of `proto/port` entries accepted when deserializing a
+/// [`PortProtoList`]. Bounds parse-time memory against pathological
+/// configs. A legitimate deployment has at most a handful of ports per
+/// stanza; 1024 leaves generous headroom while blocking DoS vectors.
+#[allow(clippy::doc_markdown)]
+pub const MAX_PORTS_PER_STANZA: usize = 1024;
+
 /// A list of `proto/port` strings, deserialized from a `Vec<String>`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
@@ -103,6 +111,13 @@ pub struct PortProtoList(
 impl<'de> Deserialize<'de> for PortProtoList {
     fn deserialize<D: Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
         let strings: Vec<String> = Vec::deserialize(de)?;
+        if strings.len() > MAX_PORTS_PER_STANZA {
+            return Err(serde::de::Error::custom(format!(
+                "open_ports list has {} entries, exceeds maximum of {}",
+                strings.len(),
+                MAX_PORTS_PER_STANZA
+            )));
+        }
         let mut out = Vec::with_capacity(strings.len());
         for s in strings {
             out.push(parse_port_proto(&s).map_err(serde::de::Error::custom)?);
@@ -112,7 +127,7 @@ impl<'de> Deserialize<'de> for PortProtoList {
 }
 
 /// A base64-encoded 32-byte key, validated on deserialize.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct Base64Key(
     /// The decoded 32-byte key material.
     pub [u8; 32],
@@ -247,5 +262,19 @@ mod tests {
         let s = format!("{key:?}");
         assert!(!s.contains("ab"));
         assert!(s.contains("redacted"));
+    }
+
+    #[test]
+    fn base64_key_impls_zeroize_on_drop() {
+        fn assert_zod<T: zeroize::ZeroizeOnDrop>() {}
+        assert_zod::<Base64Key>();
+    }
+
+    #[test]
+    fn base64_key_zeroizes_inner_bytes() {
+        use zeroize::Zeroize as _;
+        let mut k = Base64Key([0xAA; 32]);
+        k.0.zeroize();
+        assert!(k.0.iter().all(|&b| b == 0));
     }
 }

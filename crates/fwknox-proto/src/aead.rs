@@ -22,6 +22,14 @@ pub const NONCE_LEN: usize = 12;
 pub const TAG_LEN: usize = 16;
 
 /// Generate a fresh 12-byte nonce from the system CSPRNG.
+///
+/// # Nonce uniqueness
+///
+/// AES-256-GCM requires every `(key, nonce)` pair to be unique. This function
+/// samples 96 bits from the OS CSPRNG, so uniqueness is statistical rather
+/// than guaranteed: by the birthday bound, collision probability stays
+/// negligible (below 2^-32) until roughly 2^32 nonces are drawn under the
+/// same key, which is far beyond any realistic fwknox packet rate.
 pub fn generate_nonce() -> Result<[u8; NONCE_LEN], ProtoError> {
     let rng = SystemRandom::new();
     let mut out = [0u8; NONCE_LEN];
@@ -32,6 +40,16 @@ pub fn generate_nonce() -> Result<[u8; NONCE_LEN], ProtoError> {
 /// Encrypt `plaintext` under `key` and `nonce`, binding `aad`.
 ///
 /// Returns ciphertext with the GCM tag appended (length = `plaintext.len()` + 16).
+///
+/// # Nonce uniqueness
+///
+/// AES-256-GCM fails catastrophically if the same `(key, nonce)` pair is ever
+/// used to encrypt two distinct plaintexts: an attacker can recover the GCM
+/// authentication subkey `H` and forge arbitrary ciphertexts, and plaintext
+/// XOR is leaked. Callers MUST ensure every `nonce` passed to `seal` under a
+/// given `key` is unique. fwknox satisfies this by sourcing nonces from
+/// [`generate_nonce`], which draws 96 bits from the system CSPRNG.
+#[must_use = "seal returns ciphertext that must be transmitted or stored"]
 pub fn seal(
     key: &[u8],
     nonce: &[u8; NONCE_LEN],
@@ -57,6 +75,16 @@ pub fn seal(
 /// Decrypt `ciphertext_and_tag` under `key`, `nonce`, and `aad`. The input
 /// must be ciphertext followed by the 16-byte GCM tag. On success returns
 /// the plaintext bytes.
+///
+/// # Nonce uniqueness
+///
+/// Decryption itself does not require the `nonce` to be unique, but the
+/// security of the surrounding protocol does: if a peer ever encrypted two
+/// different messages under the same `(key, nonce)` pair, AES-256-GCM's
+/// authentication guarantees collapse and forged ciphertexts may verify.
+/// fwknox relies on [`generate_nonce`] (CSPRNG) on the sender side to make
+/// collisions statistically negligible; see [`seal`] for the full rationale.
+#[must_use = "open returns the decrypted plaintext"]
 pub fn open(
     key: &[u8],
     nonce: &[u8; NONCE_LEN],

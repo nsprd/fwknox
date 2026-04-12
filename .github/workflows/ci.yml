@@ -26,9 +26,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -38,9 +45,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
@@ -51,8 +65,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --workspace --all-targets
@@ -62,8 +84,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: audit
@@ -83,8 +113,16 @@ jobs:
       RUSTFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - uses: Swatinem/rust-cache@v2
       - name: Release build
         run: cargo build --release --workspace --bins
@@ -112,9 +150,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
-      - name: Install nightly toolchain with aarch64 target
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain with aarch64 target
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           targets: aarch64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
         with:

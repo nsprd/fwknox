@@ -17,12 +17,35 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fwknox_capture::CapturedPacket;
-use fwknox_config::DaemonConfig;
+use fwknox_config::{AccessStanza, DaemonConfig};
 use fwknox_firewall::{AccessRule, FirewallBackend, RuleHandle};
 use fwknox_proto::{validate_against_clock, SpaMessage, DEFAULT_MAX_SKEW_SECS};
 use fwknox_replay::ReplayCache;
 
-use crate::matcher::{match_packet, MatchResult};
+use crate::{
+    error::DaemonError,
+    matcher::{match_packet, MatchResult},
+};
+
+/// Look up a stanza by name in `config.access`.
+///
+/// Factored out of [`process_packet`] so it can be unit-tested
+/// directly. The matcher guarantees (today) that any name it returns
+/// is present in `config.access`, but we return a [`DaemonError`]
+/// instead of panicking so that a future config reload or matcher
+/// refactor cannot turn an invariant bug into a daemon crash.
+pub(crate) fn find_stanza<'a>(
+    config: &'a DaemonConfig,
+    stanza_name: &str,
+) -> Result<&'a AccessStanza, DaemonError> {
+    config
+        .access
+        .iter()
+        .find(|s| s.name == stanza_name)
+        .ok_or_else(|| {
+            DaemonError::InvariantViolation(format!("stanza {stanza_name} not in config"))
+        })
+}
 
 /// Outcome of running [`process_packet`] on a single packet.
 #[derive(Debug)]
@@ -71,7 +94,7 @@ pub fn process_packet(
     config: &DaemonConfig,
     replay: &ReplayCache,
     firewall: &dyn FirewallBackend,
-) -> Result<ProcessResult, fwknox_firewall::FirewallError> {
+) -> Result<ProcessResult, DaemonError> {
     // Step 1: stanza matching.
     let (stanza_name, payload) = match match_packet(&captured.data, &config.access) {
         MatchResult::Matched {
@@ -90,11 +113,7 @@ pub fn process_packet(
         }
     };
 
-    let stanza = config
-        .access
-        .iter()
-        .find(|s| s.name == stanza_name)
-        .expect("stanza name returned by matcher must exist in config");
+    let stanza = find_stanza(config, &stanza_name)?;
 
     // Step 2: timestamp validation.
     let max_age = i64::try_from(config.daemon.max_spa_packet_age.as_secs()).unwrap_or(i64::MAX);
@@ -105,9 +124,25 @@ pub fn process_packet(
         });
     }
 
-    // Step 3: replay check.
-    if !replay.check_and_insert(payload.nonce) {
-        return Ok(ProcessResult::Replay { stanza_name });
+    // Step 3: replay check. Persist failures fail closed: we reject the
+    // packet without installing a rule so a crash after accept cannot
+    // leave a nonce in RAM only (C2).
+    match replay.check_and_insert(payload.nonce) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Ok(ProcessResult::Replay { stanza_name });
+        }
+        Err(e) => {
+            tracing::error!(
+                stanza = %stanza_name,
+                error = %e,
+                "replay cache persist failed; failing closed (no firewall rule)"
+            );
+            return Ok(ProcessResult::Rejected {
+                stanza_name,
+                reason: format!("replay cache persist failed: {e}"),
+            });
+        }
     }
 
     // Step 4: source IP allowlist + require_source_match.
@@ -314,6 +349,21 @@ require_source_match = true
                 assert!(reason.contains("source mismatch"));
             }
             other => panic!("expected Rejected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn find_stanza_returns_invariant_error_for_unknown_name() {
+        let key = [0x42u8; 32];
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = load_daemon_config(write_test_config(dir.path(), &key)).unwrap();
+        // "ssh" exists; "nonexistent" does not.
+        assert!(find_stanza(&cfg, "ssh").is_ok());
+        match find_stanza(&cfg, "nonexistent") {
+            Err(DaemonError::InvariantViolation(msg)) => {
+                assert!(msg.contains("nonexistent"), "got: {msg}");
+            }
+            other => panic!("expected InvariantViolation, got {other:?}"),
         }
     }
 

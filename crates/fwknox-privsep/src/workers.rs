@@ -46,6 +46,7 @@ where
     S: FnMut() -> bool,
 {
     info!("capture worker: starting");
+    debug_assert_sigterm_unmasked();
     udp_socket
         .set_read_timeout(Some(CAPTURE_POLL_INTERVAL))
         .map_err(PrivsepError::Io)?;
@@ -123,6 +124,7 @@ where
     S: FnMut() -> bool,
 {
     info!("crypto worker: starting");
+    debug_assert_sigterm_unmasked();
     from_capture
         .set_read_timeout(Some(CRYPTO_POLL_INTERVAL))
         .map_err(PrivsepError::Io)?;
@@ -135,7 +137,24 @@ where
         match crate::ipc::recv_msg::<CaptureMsg>(from_capture) {
             Ok(capture_msg) => {
                 debug!("crypto worker: received CaptureMsg");
-                let reply = validate(capture_msg);
+                // Catch panics from the caller-supplied validator.
+                // A malformed packet tripping a parser bug in
+                // fwknox-proto would otherwise unwind out of the
+                // worker loop, fire the sandbox's panic hook, and
+                // SIGABRT the whole crypto process — turning one
+                // bad packet into a daemon-wide DoS. Swallow the
+                // panic, drop the packet, and keep serving.
+                let reply = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    validate(capture_msg)
+                })) {
+                    Ok(reply) => reply,
+                    Err(_panic_payload) => {
+                        tracing::error!(
+                            "crypto worker: validator panicked; dropping packet and continuing"
+                        );
+                        continue;
+                    }
+                };
                 if let Err(e) = send_msg(to_parent, &reply) {
                     warn!(error = %e, "crypto worker: send to parent failed; exiting");
                     return Err(e);
@@ -151,6 +170,33 @@ where
                 warn!(error = %e, "crypto worker: recv from capture failed; exiting");
                 return Err(e);
             }
+        }
+    }
+}
+
+/// Debug-only assertion that SIGTERM is currently unmasked.
+///
+/// The worker loops rely on the parent installing a SIGTERM handler
+/// (which flips the shutdown flag the `is_shutdown` closures read) and
+/// on SIGTERM being deliverable to the worker process. If the parent
+/// accidentally enters a worker with SIGTERM blocked — e.g. because a
+/// future refactor calls `pthread_sigmask` before `fork()` and forgets
+/// to restore — the worker would never see the shutdown signal and
+/// the daemon would hang on graceful shutdown. This catches that bug
+/// in debug builds; the function is a no-op in release.
+#[inline]
+fn debug_assert_sigterm_unmasked() {
+    #[cfg(debug_assertions)]
+    {
+        use nix::sys::signal::{sigprocmask, SigSet, SigmaskHow, Signal};
+        let mut current = SigSet::empty();
+        // Pass None for the set argument to read the mask without
+        // modifying it.
+        if sigprocmask(SigmaskHow::SIG_BLOCK, None, Some(&mut current)).is_ok() {
+            debug_assert!(
+                !current.contains(Signal::SIGTERM),
+                "worker entered with SIGTERM masked; parent must keep SIGTERM unmasked"
+            );
         }
     }
 }
