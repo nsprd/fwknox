@@ -34,11 +34,9 @@ jobs:
           - arch: amd64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            platform: linux/amd64
           - arch: arm64
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            platform: linux/arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -58,20 +56,27 @@ jobs:
           key: ${{ matrix.arch }}
 
       - name: Build release binaries
-        run: cargo build --release --workspace --bins
+        run: cargo build --release --workspace --bins --target ${{ matrix.target }}
 
       - name: Stage and archive
         run: |
-          mkdir -p dist
-          cp target/release/fwknox  dist/fwknox
-          cp target/release/fwknoxd dist/fwknoxd
-          cp config/fwknoxd.toml.example dist/fwknoxd.toml.example
-          tar czf fwknox-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist .
+          mkdir -p dist-out
+          cp target/${{ matrix.target }}/release/fwknox  dist-out/fwknox
+          cp target/${{ matrix.target }}/release/fwknoxd dist-out/fwknoxd
+          cp config/fwknoxd.toml.example dist-out/fwknoxd.toml.example
+          cp dist/fwknoxd.service dist-out/fwknoxd.service
+          cp LICENSE dist-out/LICENSE
+          tar czf fwknox-${{ github.ref_name }}-${{ matrix.target }}.tar.gz -C dist-out .
 
+      # Keep binaries at their original target-qualified path so cargo-deb
+      # and cargo-generate-rpm (both respect --target) can find them in
+      # the packaging jobs.
       - uses: actions/upload-artifact@v4
         with:
-          name: bin-${{ matrix.arch }}
-          path: dist/fwknox dist/fwknoxd
+          name: release-build-${{ matrix.arch }}
+          path: |
+            target/${{ matrix.target }}/release/fwknox
+            target/${{ matrix.target }}/release/fwknoxd
           retention-days: 1
 
       - uses: actions/upload-artifact@v4
@@ -83,7 +88,6 @@ jobs:
   docker:
     name: build and push image (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -96,14 +100,6 @@ jobs:
             platform: linux/arm64
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: bin-${{ matrix.arch }}
-          path: dist
-
-      - name: Restore binary permissions
-        run: chmod 0755 dist/fwknox dist/fwknoxd
 
       - name: Login to ghcr.io
         uses: docker/login-action@v3
@@ -122,6 +118,8 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: true
+          cache-from: type=gha,scope=docker-release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-release-${{ matrix.arch }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
 
       - name: Export digest
@@ -182,10 +180,127 @@ jobs:
             docker buildx imagetools create --tag "$tag" $refs
           done
 
+  deb:
+    name: package .deb (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-build-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release
+
+      - name: Restore binary permissions
+        run: |
+          chmod 0755 \
+            target/${{ matrix.target }}/release/fwknox \
+            target/${{ matrix.target }}/release/fwknoxd
+
+      - name: Install cargo-deb
+        run: cargo install --locked cargo-deb
+
+      # --no-build: we already have the binaries from the `build` job.
+      # --no-strip: binaries may already be stripped by cargo's release
+      # profile; in any case, strip is a no-op on already-stripped ELF.
+      - name: Build .deb
+        run: |
+          cargo deb \
+            -p fwknox-daemon \
+            --target ${{ matrix.target }} \
+            --no-build \
+            --no-strip \
+            --output fwknox_${{ github.ref_name }}_${{ matrix.arch }}.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: fwknox_*.deb
+          retention-days: 1
+
+  rpm:
+    name: package .rpm (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            rpm_arch: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            rpm_arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-build-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release
+
+      - name: Restore binary permissions
+        run: |
+          chmod 0755 \
+            target/${{ matrix.target }}/release/fwknox \
+            target/${{ matrix.target }}/release/fwknoxd
+
+      - name: Install cargo-generate-rpm
+        run: cargo install --locked cargo-generate-rpm
+
+      - name: Build .rpm
+        run: |
+          cargo generate-rpm \
+            -p crates/fwknox-daemon \
+            --target ${{ matrix.target }} \
+            --payload-compress zstd
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/generate-rpm/*.rpm
+          retention-days: 1
+
   release:
     name: create GitHub release
     runs-on: ubuntu-latest
-    needs: [build, manifest]
+    needs: [build, manifest, deb, rpm]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -195,6 +310,18 @@ jobs:
         with:
           path: release-assets
           pattern: tarball-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: deb-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: rpm-*
           merge-multiple: true
 
       # Fetch the GitHub-generated source tarball for this tag, compute
@@ -224,4 +351,6 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             release-assets/fwknox-*.tar.gz
+            release-assets/fwknox_*.deb
+            release-assets/*.rpm
             dist/PKGBUILD

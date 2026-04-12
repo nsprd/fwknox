@@ -53,3 +53,58 @@ path = "src/bin/fwknoxd.rs"
 [[bin]]
 name = "fwknoxd-mock"
 path = "src/bin/fwknoxd-mock.rs"
+
+# --- Distro packaging ---------------------------------------------------------
+#
+# The .deb and .rpm below bundle BOTH binaries (fwknox + fwknoxd), the
+# example config as the real /etc/fwknox/fwknoxd.toml, the systemd unit,
+# and the license. They are built in release CI via:
+#
+#   cargo deb           -p fwknox-daemon --target <target> --no-build --no-strip
+#   cargo generate-rpm  -p fwknox-daemon --target <target>
+#
+# `fwknox` is a binary from the sibling `fwknox-client` crate; cargo-deb
+# and cargo-generate-rpm both accept it as a cross-crate asset because the
+# binary is produced by the same workspace `cargo build --workspace --bins`
+# that precedes the packaging step. Paths that start with `target/release/`
+# are auto-remapped by cargo-deb when `--target` is passed.
+
+[package.metadata.deb]
+name = "fwknox"
+maintainer = "fwknox maintainers <noreply@fwknox.invalid>"
+copyright = "2026, fwknox maintainers"
+license-file = ["../../LICENSE", "0"]
+extended-description = """
+fwknox is a Single Packet Authorization (SPA) firewall daemon — a
+clean-room Rust port of fwknop. It keeps protected services invisible
+to port scanners and opens them only to clients that can prove knowledge
+of a shared secret via one authenticated, encrypted UDP packet.
+"""
+depends = "libc6, nftables"
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/fwknoxd", "/usr/bin/fwknoxd", "755"],
+    ["target/release/fwknox",  "/usr/bin/fwknox",  "755"],
+    ["../../config/fwknoxd.toml.example", "/etc/fwknox/fwknoxd.toml.example", "644"],
+    ["../../dist/fwknoxd.service",        "/lib/systemd/system/fwknoxd.service", "644"],
+    ["../../LICENSE",                     "/usr/share/doc/fwknox/LICENSE", "644"],
+    ["../../README.md",                   "/usr/share/doc/fwknox/README.md", "644"],
+]
+conf-files = [
+    "/etc/fwknox/fwknoxd.toml.example",
+]
+
+[package.metadata.generate-rpm]
+name = "fwknox"
+summary = "Single Packet Authorization firewall daemon — Rust port of fwknop"
+license = "AGPL-3.0-or-later"
+requires = { nftables = "*" }
+assets = [
+    { source = "target/release/fwknoxd", dest = "/usr/bin/fwknoxd", mode = "755" },
+    { source = "target/release/fwknox",  dest = "/usr/bin/fwknox",  mode = "755" },
+    { source = "config/fwknoxd.toml.example", dest = "/etc/fwknox/fwknoxd.toml.example", mode = "644", config = true },
+    { source = "dist/fwknoxd.service",        dest = "/usr/lib/systemd/system/fwknoxd.service", mode = "644" },
+    { source = "LICENSE",                     dest = "/usr/share/licenses/fwknox/LICENSE", mode = "644", doc = true },
+    { source = "README.md",                   dest = "/usr/share/doc/fwknox/README.md", mode = "644", doc = true },
+]

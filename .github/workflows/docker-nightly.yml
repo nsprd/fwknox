@@ -36,29 +36,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read rust-toolchain.toml channel
-        id: toolchain
-        run: |
-          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-      - name: Install pinned toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.toolchain.outputs.channel }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.arch }}
-
-      - name: Build release binaries
-        run: cargo build --release --workspace --bins
-
-      - name: Stage binaries
-        run: |
-          mkdir -p dist
-          cp target/release/fwknox  dist/fwknox
-          cp target/release/fwknoxd dist/fwknoxd
-
       - name: Login to ghcr.io
         uses: docker/login-action@v3
         with:
@@ -69,8 +46,9 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Per-arch digest-only push. The manifest job fuses the digests
-      # under the rolling tags afterwards.
+      # Multistage Dockerfile compiles the workspace inside the builder
+      # stage. GHA cache persists cargo registry + target across runs so
+      # repeat builds stay fast.
       - name: Build and push per-arch image
         id: build
         uses: docker/build-push-action@v6
@@ -78,6 +56,8 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: true
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true
 
       - name: Export digest

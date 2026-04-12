@@ -21,11 +21,11 @@ ref/
 # CI/CD and local tooling.
 .github/
 
-# dist/ holds packaging artifacts (PKGBUILD, systemd unit). None are
-# consumed by the container image — CI writes the release binaries to
-# dist/ via the build context, and the Dockerfile COPYs those by name.
-# Keep the directory ignored so stray packaging files don't leak in.
-dist/*
+# dist/ holds packaging artifacts (PKGBUILD, systemd unit). The
+# multistage Dockerfile does not consume any of them — the builder
+# stage compiles from crates/ + Cargo.{toml,lock} directly — so we
+# keep the whole directory out of the build context.
+dist/
 
 # Docs — not shipped in the image.
 docs/
