@@ -356,7 +356,6 @@ version = "0.1.0"
 dependencies = [
  "fwknox-config",
  "lru",
- "thiserror",
  "tracing",
 ]
 

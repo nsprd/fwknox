@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#![allow(dead_code)]
-
 //! Atomic metric counters for the rate limiter.
 //!
 //! The limiter's hot-path counters live in atomics outside the main

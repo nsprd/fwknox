@@ -15,5 +15,4 @@ workspace = true
 [dependencies]
 fwknox-config.workspace = true
 lru.workspace = true
-thiserror.workspace = true
 tracing.workspace = true

@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-#![allow(dead_code)]
-
 //! A continuous-refill token bucket.
 //!
 //! The bucket uses `f64` tokens for fractional accounting and lazy
