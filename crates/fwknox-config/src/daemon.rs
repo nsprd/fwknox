@@ -144,7 +144,7 @@ impl Default for ReplaySection {
 /// The `[rate_limit]` section: per-source packet rate limiting.
 ///
 /// Defaults are tuned for a typical fwknox deployment with dozens of
-/// legitimate clients and no upstream rate limiter..
+/// legitimate clients and no upstream rate limiter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimitSection {
