@@ -33,6 +33,54 @@ enable_privsep      = true
 cache_path = "/var/lib/fwknox/replay.cache"
 max_age    = "24h"
 
+# ----------------------------------------------------------------------
+# [rate_limit] — per-source UDP packet rate limiter
+#
+# Protects the daemon from packet-flood denial of service by enforcing
+# token-bucket rate limits in the capture path, before packets reach
+# the crypto pipeline. Two tiers:
+#
+#   1. A small LRU of "hot sources" gets exact per-source accounting.
+#   2. All other traffic shares a single global fallback bucket.
+#
+# Sources earn their way into the hot LRU by successfully consuming
+# `promotion_threshold` tokens from the global bucket (rejected packets
+# do not count). This design prevents an attacker from forcing
+# promotion via sustained flood volume.
+# ----------------------------------------------------------------------
+[rate_limit]
+
+# Master switch. Set to false to disable rate limiting entirely.
+enabled = true
+
+# Per-source token bucket (applies to sources promoted into exact
+# tracking). Defaults chosen so legitimate clients never see drops:
+# one SPA session is ~1 packet, and 10/sec is 100x above any realistic
+# legitimate rate.
+per_source_rate_per_sec = 10
+per_source_burst        = 20
+
+# Maximum number of exact-tracked sources. LRU-evicted when full.
+# Larger values give more precise accounting for active deployments;
+# smaller values reduce memory footprint but evict faster under load.
+tracked_sources_capacity = 1024
+
+# Global fallback bucket. Sized so a sustained flood can push at most
+# ~500 pps through the crypto worker — well below the packet rate at
+# which HMAC verification becomes a CPU bottleneck.
+global_rate_per_sec = 500
+global_burst        = 1000
+
+# Number of successful global-bucket consumptions before a source is
+# promoted into exact tracking. Rejected packets do not contribute.
+promotion_threshold = 5
+
+# IPv6 source addresses are masked to this prefix length before keying.
+# /64 is the IETF-standard end-site allocation boundary. Use /48 in
+# deployments where corporate IPv6 allocations dominate the traffic;
+# use /128 (no masking) only if you understand the exhaustion risk.
+ipv6_prefix_len = 64
+
 # Example access stanza: opens SSH (22/tcp) from whichever IP sent the SPA
 # packet, for the duration requested by the packet (capped by
 # max_fw_timeout above).
