@@ -11,18 +11,14 @@ on:
     - cron: '23 4 * * 1'
 
 permissions:
-  contents: read
   security-events: write
+  packages: read
   actions: read
+  contents: read
 
 concurrency:
   group: codeql-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: short
-  CARGO_INCREMENTAL: 0
 
 jobs:
   analyze:
@@ -33,41 +29,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [rust, actions]
+        include:
+          - language: actions
+            build-mode: none
+          - language: rust
+            build-mode: none
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Read rust-toolchain.toml channel
-        id: toolchain
-        if: matrix.language == 'rust'
-        run: |
-          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
-          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
-          echo "channel=$channel" >> "$GITHUB_OUTPUT"
-
-      - name: Install pinned toolchain
-        if: matrix.language == 'rust'
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.toolchain.outputs.channel }}
-
-      - name: Cache cargo build
-        if: matrix.language == 'rust'
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: codeql
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql/codeql-config.yml
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@v3
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
