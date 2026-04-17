@@ -319,9 +319,15 @@ dependencies = [
  "fwknox-config",
  "fwknox-daemon",
  "fwknox-firewall",
+ "fwknox-privsep",
  "fwknox-proto",
  "fwknox-ratelimit",
  "fwknox-replay",
+ "fwknox-sandbox",
+ "libc",
+ "nftables",
+ "nix",
+ "seccompiler",
  "tempfile",
 ]
 

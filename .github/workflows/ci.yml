@@ -135,6 +135,45 @@ jobs:
             target/release/fwknoxd
           retention-days: 7
 
+  integration-real:
+    name: integration (real kernel)
+    runs-on: ubuntu-latest
+    # Runs the `real-net`-feature-gated tests against the live kernel:
+    # real nftables, real seccomp-bpf, real fork-based privsep, and the
+    # full fwknoxd/fwknox binaries. These tests need root on the host,
+    # so they can't share the `test` job — that job runs unprivileged
+    # and is fast enough to gate every PR on its own.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nftables userspace + load kernel module
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables
+          sudo nft --version
+          sudo modprobe nf_tables || true
+      - name: Read rust-toolchain.toml channel
+        id: toolchain
+        run: |
+          channel=$(awk -F'"' '/^channel/ {print $2}' rust-toolchain.toml)
+          if [ -z "$channel" ]; then echo "channel not found" && exit 1; fi
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: integration-real
+      - name: Build workspace binaries
+        run: cargo build --bin fwknoxd --bin fwknox
+      - name: Compile real-integration test binaries
+        run: cargo test -p fwknox-integration-tests --features real-net --no-run
+      - name: Run real-integration tests as root
+        run: |
+          sudo --preserve-env=PATH,HOME,CARGO_HOME,RUSTUP_HOME \
+            "$(which cargo)" test -p fwknox-integration-tests --features real-net -- \
+            --test-threads=1 --nocapture
+
   aarch64-check:
     name: aarch64 check
     runs-on: ubuntu-latest
