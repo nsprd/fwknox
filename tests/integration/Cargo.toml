@@ -10,10 +10,39 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
-[lints]
-workspace = true
+[lints.rust]
+# unsafe is needed for the direct libc syscalls used by the seccomp
+# helper binary and for fork() in the real-privsep test.
+unsafe_code = "allow"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+duration_suboptimal_units = "allow"
+
+[features]
+# Gate for tests that require root privileges and a real Linux kernel
+# (nftables, seccomp-bpf, fork-based privsep). Disabled by default so
+# `cargo test --workspace` stays fast and runs unprivileged. CI turns
+# this on in a dedicated sudo-elevated job.
+#
+# Activating the feature also pulls in the extra dependencies the
+# `bin/*.rs` helpers need — binaries can't see `[dev-dependencies]`,
+# so the sandbox + libc bindings are declared as optional
+# `[dependencies]` that this feature enables.
+real-net = ["dep:fwknox-sandbox", "dep:libc"]
 
 [dependencies]
+# Optional deps used only by the `real-net`-gated helper binaries. They
+# are activated by the `real-net` feature above; without it they are
+# not compiled.
+fwknox-sandbox = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 
 [dev-dependencies]
 base64.workspace = true
@@ -23,7 +52,19 @@ fwknox-client.workspace = true
 fwknox-config.workspace = true
 fwknox-daemon.workspace = true
 fwknox-firewall.workspace = true
+fwknox-privsep.workspace = true
 fwknox-proto.workspace = true
 fwknox-ratelimit.workspace = true
 fwknox-replay.workspace = true
+nftables.workspace = true
+nix.workspace = true
+seccompiler.workspace = true
 tempfile.workspace = true
+
+# Helper binaries used as subprocess victims by the real-* integration
+# tests. They live under `tests/integration/bin/` and are built only
+# when the `real-net` feature is on.
+[[bin]]
+name = "seccomp-victim"
+path = "bin/seccomp_victim.rs"
+required-features = ["real-net"]

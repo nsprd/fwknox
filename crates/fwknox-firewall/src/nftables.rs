@@ -68,6 +68,20 @@ pub const CHAIN_NAME: &str = "input";
 pub trait RulesetApplier: Send + Sync + std::fmt::Debug {
     /// Apply a typed nftables ruleset to the kernel (or to a test sink).
     fn apply(&self, ruleset: &Nftables<'_>) -> Result<(), FirewallError>;
+
+    /// Return the current kernel ruleset as [`Nftables`]. Used by
+    /// [`FirewallBackend::remove_rule`] to verify whether elements that
+    /// failed to delete are actually missing: upstream `nftables-rs`
+    /// 0.6.x does not pipe `nft`'s stderr on the apply path, so the
+    /// ENOENT-classification string is sometimes empty and the error
+    /// cannot be distinguished from a real failure by message alone.
+    /// The default impl returns [`FirewallError::Unsupported`] so test
+    /// doubles do not have to implement it.
+    fn get_current(&self) -> Result<Nftables<'static>, FirewallError> {
+        Err(FirewallError::Unsupported(
+            "get_current not implemented for this applier",
+        ))
+    }
 }
 
 /// Production applier that calls `nftables::helper::apply_ruleset`.
@@ -77,6 +91,10 @@ pub struct SystemApplier;
 impl RulesetApplier for SystemApplier {
     fn apply(&self, ruleset: &Nftables<'_>) -> Result<(), FirewallError> {
         helper::apply_ruleset(ruleset).map_err(nftables_error_to_firewall)
+    }
+
+    fn get_current(&self) -> Result<Nftables<'static>, FirewallError> {
+        helper::get_current_ruleset().map_err(nftables_error_to_firewall)
     }
 }
 
@@ -114,6 +132,93 @@ fn stderr_indicates_missing_element(stderr: &str) -> bool {
     lower.contains("no such file or directory")
         || lower.contains("could not process rule")
         || lower.contains("set element does not exist")
+}
+
+/// Return `true` if a formatted [`FirewallError::Backend`] message shows
+/// that the upstream `nftables-rs` crate reported empty stderr.
+///
+/// `nftables-rs` 0.6.x spawns `nft` without piping its stderr, so the
+/// bytes that the `nft` binary writes to fd 2 never reach our error
+/// path: we see `stderr=""` verbatim in the formatted message even
+/// though `nft` printed a clear ENOENT line to the terminal. When this
+/// pattern appears we can't classify by string; the caller must fall
+/// back to a kernel-state query.
+fn backend_has_empty_stderr(msg: &str) -> bool {
+    msg.contains("stderr=\"\"")
+}
+
+/// Return `true` if at least one of the `(ipv4, proto, port)` entries
+/// encoded in `handle` is still present in the fwknox allow set of
+/// `ruleset`. Used as a tie-breaker when the apply path reports an
+/// un-classifiable failure (see [`backend_has_empty_stderr`]): if none
+/// of the targets are present in the live kernel view, the failure was
+/// an ENOENT and we translate it to [`FirewallError::RuleNotFound`].
+fn handle_has_present_elements(handle: &RuleHandle, ruleset: &Nftables<'_>) -> bool {
+    use nftables::{
+        expr::{Expression, NamedExpression},
+        schema::NfObject,
+    };
+
+    let targets: Vec<(String, String, u32)> = handle
+        .as_str()
+        .split(',')
+        .filter_map(|entry| {
+            let parts: Vec<&str> = entry.split('/').collect();
+            if parts.len() != 3 {
+                return None;
+            }
+            let port: u32 = parts[2].parse().ok()?;
+            Some((parts[0].to_string(), parts[1].to_string(), port))
+        })
+        .collect();
+    if targets.is_empty() {
+        // Malformed handle — let the caller propagate the original
+        // Backend error rather than silently re-classifying.
+        return true;
+    }
+
+    for obj in ruleset.objects.iter() {
+        let NfObject::ListObject(NfListObject::Set(set)) = obj else {
+            continue;
+        };
+        if set.name != SET_NAME {
+            continue;
+        }
+        let Some(elems) = set.elem.as_ref() else {
+            continue;
+        };
+        for e in elems.iter() {
+            // Each element is stored as a concatenation of
+            // (ipv4 string, proto string, port number). Any other shape
+            // is foreign to this backend and we conservatively ignore
+            // it rather than mis-matching.
+            let Expression::Named(NamedExpression::Concat(parts)) = e else {
+                continue;
+            };
+            if parts.len() != 3 {
+                continue;
+            }
+            let ip = match &parts[0] {
+                Expression::String(s) => s.as_ref(),
+                _ => continue,
+            };
+            let proto = match &parts[1] {
+                Expression::String(s) => s.as_ref(),
+                _ => continue,
+            };
+            let port = match &parts[2] {
+                Expression::Number(n) => *n,
+                _ => continue,
+            };
+            if targets
+                .iter()
+                .any(|(t_ip, t_proto, t_port)| t_ip == ip && t_proto == proto && *t_port == port)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// nftables backend that builds typed `Nftables` rulesets and dispatches
@@ -332,6 +437,22 @@ impl FirewallBackend for NftablesBackend {
             Ok(()) => Ok(()),
             Err(FirewallError::Backend(msg)) if stderr_indicates_missing_element(&msg) => {
                 Err(FirewallError::RuleNotFound(handle.as_str().into()))
+            }
+            Err(FirewallError::Backend(msg)) if backend_has_empty_stderr(&msg) => {
+                // Upstream nftables-rs 0.6.x doesn't pipe `nft`'s stderr
+                // when spawning the subprocess, so we routinely see
+                // `stderr=""` even when the kernel returned a real
+                // ENOENT. Query the current ruleset and, if none of the
+                // elements we tried to delete are present, translate to
+                // RuleNotFound. On any query failure (e.g. the user no
+                // longer has CAP_NET_ADMIN) propagate the original
+                // Backend error untouched.
+                match self.applier.get_current() {
+                    Ok(rs) if !handle_has_present_elements(handle, &rs) => {
+                        Err(FirewallError::RuleNotFound(handle.as_str().into()))
+                    }
+                    _ => Err(FirewallError::Backend(msg)),
+                }
             }
             Err(e) => Err(e),
         }
