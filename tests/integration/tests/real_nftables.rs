@@ -57,17 +57,22 @@ fn table_present(rs: &Nftables<'_>) -> bool {
 /// Return the number of set elements currently installed in the
 /// `fwknox_allow_v4` set. Used to confirm add/remove actually hit the
 /// kernel.
+///
+/// On read (`nft list ruleset -j`), elements are reported nested inside
+/// their parent `Set` object's `elem` field — NOT as top-level
+/// `NfListObject::Element` entries. The write direction is the opposite:
+/// `open_access` submits standalone `Element` adds. We therefore walk
+/// the `Set` objects and count their `elem` length.
 fn element_count(rs: &Nftables<'_>) -> usize {
     rs.objects
         .iter()
-        .filter(|obj| {
-            matches!(
-                obj,
-                NfObject::ListObject(NfListObject::Element(e))
-                    if e.name == SET_NAME
-            )
+        .filter_map(|obj| match obj {
+            NfObject::ListObject(NfListObject::Set(s)) if s.name == SET_NAME => {
+                Some(s.elem.as_ref().map_or(0, |e| e.len()))
+            }
+            _ => None,
         })
-        .count()
+        .sum()
 }
 
 /// Pre-flight: tear down any leftover fwknox table from a previous test

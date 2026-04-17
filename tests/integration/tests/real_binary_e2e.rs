@@ -118,18 +118,21 @@ require_source_match = true
 }
 
 /// Count the number of set elements live in the fwknox allow set.
+///
+/// `nft list ruleset -j` reports elements nested inside the owning
+/// `Set` object (`set.elem`); top-level `Element` objects only appear
+/// on the add/delete write path. Walk sets and sum their `elem` len.
 fn installed_element_count() -> usize {
     let rs = get_current_ruleset().expect("list ruleset");
     rs.objects
         .iter()
-        .filter(|obj| {
-            matches!(
-                obj,
-                NfObject::ListObject(NfListObject::Element(e))
-                    if e.name == fwknox_firewall::SET_NAME
-            )
+        .filter_map(|obj| match obj {
+            NfObject::ListObject(NfListObject::Set(s)) if s.name == fwknox_firewall::SET_NAME => {
+                Some(s.elem.as_ref().map_or(0, |e| e.len()))
+            }
+            _ => None,
         })
-        .count()
+        .sum()
 }
 
 #[test]
