@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# CodeQL configuration for fwknox. The production source lives under
+# `crates/*/src/`; everything else is either test code, build output,
+# packaging scaffolding, or generated docs — none of which benefits
+# from being part of the security scan surface.
+#
+# Reference: https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning#using-a-custom-configuration-file
+
+name: fwknox CodeQL config
+
+# `paths-ignore` is evaluated relative to the repository root. A leaf
+# `tests/` directory appears both at the workspace root (the
+# `fwknox-integration-tests` crate) and inside each member crate. The
+# double-star glob catches both.
+paths-ignore:
+  # Workspace-level integration tests crate.
+  - tests/**
+  # Per-crate integration tests (`crates/<name>/tests/`).
+  - crates/*/tests/**
+  # Benchmarks if they are ever added.
+  - "**/benches/**"
+  # Build output. CodeQL's build step generates this anyway; scanning
+  # it would duplicate findings from the real source.
+  - target/**
+  - "**/target/**"
+  # Packaging / distribution files. These are either systemd units,
+  # PKGBUILD scripts, or Dockerfiles — not Rust source.
+  - dist/**
+  - docs/**
+  - config/**
+
+# Also drop any query whose CodeQL metadata tags it as a test query —
+# those fire on code *under test*, which by definition is not what we
+# care about here.
+query-filters:
+  - exclude:
+      tags contain: test
